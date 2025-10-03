@@ -1,0 +1,8 @@
+[workspace]
+members = ["sony-wf1000xm5", "controller-gui"]
+resolver = "3"
+
+[profile.superopt]
+inherits = "release"
+codegen-units = 1
+lto = "fat"
