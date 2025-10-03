@@ -39,6 +39,9 @@ pub async fn thread_main(
     let session = Session::new().await?;
     let mut profile_handle = session.register_profile(profile).await?;
     let connection = tokio::select! {
+        _ = stop_rx.recv() => {
+            return Ok(());
+        }
         Some(connection_request) = profile_handle.next() => {
             connection_request
         }
@@ -60,6 +63,10 @@ pub async fn thread_main(
     stream.write_all(&init_command).await.unwrap();
     loop {
         tokio::select! {
+            _ = stop_rx.recv() => {
+                return Ok(());
+            }
+
             Ok(_) = stream.peek(&mut buffer) => {
                 break;
             }

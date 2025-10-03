@@ -466,15 +466,18 @@ impl eframe::App for App {
                     }
                     if !bt_info.is_powered {
                         ui.label("Bluetooth is not on. Turn it on and press refresh.");
-                    }
-                    else {
+                    } else {
                         self.start_device_discovery_task(ctx, ui);
                         for (device, dev) in self.bt_devices.borrow().iter() {
                             ui.radio_value(&mut self.device, device.clone(), device);
                             if self.device == *device {
                                 self.device_addr = dev.address().to_string();
                             }
-                            if self.device.is_empty() && let Some(addr) = self.last_connected_addr() && dev.address().to_string() == *addr && !self.found_last_device {
+                            if self.device.is_empty()
+                                && let Some(addr) = self.last_connected_addr()
+                                && dev.address().to_string() == *addr
+                                && !self.found_last_device
+                            {
                                 self.device = device.clone();
                                 self.found_last_device = true;
                             }
@@ -482,7 +485,9 @@ impl eframe::App for App {
 
                         if !self.device.is_empty() {
                             #[allow(clippy::collapsible_if)]
-                            if ui.button("connect?").clicked() || (self.found_last_device && !self.tried_connecting_to_last_device){
+                            if ui.button("connect?").clicked()
+                                || (self.found_last_device && !self.tried_connecting_to_last_device)
+                            {
                                 // even if we didn't find the last device, if you try to connect to something before we found the device,
                                 // we won't connect.
                                 self.tried_connecting_to_last_device = true;
@@ -491,8 +496,10 @@ impl eframe::App for App {
                                 self.start_connection_thread(ctx);
                             }
 
-                            ui.checkbox(&mut self.connect_to_the_device_automatically_on_startup, "Connect to this device automatically next time");
-                            
+                            ui.checkbox(
+                                &mut self.connect_to_the_device_automatically_on_startup,
+                                "Connect to this device automatically next time",
+                            );
                         }
 
                         if self.is_connected {
@@ -508,7 +515,7 @@ impl eframe::App for App {
                                     if let Err(e) = result.as_ref() {
                                         ui.label(format!("Error while connecting: {e}"));
                                     } else {
-                                        ui.label("there was a bug; it's likely that the eventloop exited without error for some reason, but the task is still alive.");
+                                        ui.label("Connection task was interrupted.");
                                     }
                                     if ui.button("retry?").clicked() {
                                         self.connection_task.clear();
@@ -551,7 +558,7 @@ impl eframe::App for App {
                     }
                     // cloned to not hold it over an await point
                     // i don't think it actually matters in this case, but might as well to remove the clippy warning
-                    let adapter = {ui_adapter.borrow().as_ref().unwrap().clone()};
+                    let adapter = { ui_adapter.borrow().as_ref().unwrap().clone() };
 
                     Ok(BtInfo {
                         is_powered: adapter.is_powered().await?,
@@ -576,6 +583,5 @@ impl eframe::App for App {
             String::new()
         };
         storage.set_string(Self::LAST_ADDR_KEY, device);
-        
     }
 }
