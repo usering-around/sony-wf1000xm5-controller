@@ -76,6 +76,10 @@ impl App {
         }
     }
 
+    fn stop_discovery_task(&self) {
+        self.bt_devices_task.set_resource(Ok(()));
+    }
+
     fn start_device_discovery_task(&self, ctx: &Context, ui: &mut Ui) {
         match self.bt_devices_task.get() {
             ResourceStatus::Ready(result) => {
@@ -96,7 +100,7 @@ impl App {
                 ui.horizontal(|ui| {
                     ui.label("Searching devices...");
                     if ui.button("Stop searching?").clicked() {
-                        self.bt_devices_task.set_resource(Ok(()));
+                        self.stop_discovery_task();
                     }
                 });
                 ui.spinner();
@@ -173,6 +177,7 @@ impl App {
         match payload {
             Payload::InitReply => {
                 self.is_connected = true;
+                self.stop_discovery_task();
                 let mut tx_borrow = self.request_send.borrow_mut();
                 let tx = tx_borrow.as_mut().unwrap();
                 // get all information
