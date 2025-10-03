@@ -523,7 +523,7 @@ impl eframe::App for App {
                         }
                     }
                     // cloned to not hold it over an await point
-                    // i don't think it actually matters, but might as well
+                    // i don't think it actually matters in this case, but might as well to remove the clippy warning
                     let adapter = {ui_adapter.borrow().as_ref().unwrap().clone()};
 
                     Ok(BtInfo {
