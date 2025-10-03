@@ -53,13 +53,27 @@ pub struct App {
     stop_connection_task: Rc<RefCell<Option<mpsc::Sender<()>>>>,
     adapter: Rc<RefCell<Option<Adapter>>>,
     device: String,
+    device_addr: String,
+    pub last_device_addr: String,
+    pub connect_to_the_device_automatically_on_startup: bool,
+    found_last_device: bool,
+    tried_connecting_to_last_device: bool,
     is_connected: bool,
     headphone_state: HeadphoneState,
 }
 
 impl App {
+    pub const LAST_ADDR_KEY: &'static str = "LAST_CONNECTED_DEVICE_ADDRESS";
     pub fn new() -> Self {
         App::default()
+    }
+
+    fn last_connected_addr(&self) -> Option<&String> {
+        if self.last_device_addr.is_empty() {
+            None
+        } else {
+            Some(&self.last_device_addr)
+        }
     }
 
     fn start_device_discovery_task(&self, ctx: &Context, ui: &mut Ui) {
@@ -455,17 +469,30 @@ impl eframe::App for App {
                     }
                     else {
                         self.start_device_discovery_task(ctx, ui);
-                        for device in self.bt_devices.borrow().keys() {
+                        for (device, dev) in self.bt_devices.borrow().iter() {
                             ui.radio_value(&mut self.device, device.clone(), device);
+                            if self.device == *device {
+                                self.device_addr = dev.address().to_string();
+                            }
+                            if self.device.is_empty() && let Some(addr) = self.last_connected_addr() && dev.address().to_string() == *addr && !self.found_last_device {
+                                self.device = device.clone();
+                                self.found_last_device = true;
+                            }
                         }
 
                         if !self.device.is_empty() {
                             #[allow(clippy::collapsible_if)]
-                            if ui.button("connect?").clicked() {
+                            if ui.button("connect?").clicked() || (self.found_last_device && !self.tried_connecting_to_last_device){
+                                // even if we didn't find the last device, if you try to connect to something before we found the device,
+                                // we won't connect.
+                                self.tried_connecting_to_last_device = true;
                                 self.is_connected = false;
                                 self.headphone_state = HeadphoneState::default();
                                 self.start_connection_thread(ctx);
                             }
+
+                            ui.checkbox(&mut self.connect_to_the_device_automatically_on_startup, "Connect to this device automatically next time");
+                            
                         }
 
                         if self.is_connected {
@@ -540,5 +567,15 @@ impl eframe::App for App {
         self.request_send.take();
         self.response_recv.take();
         self.stop_connection_task.take();
+    }
+
+    fn save(&mut self, storage: &mut dyn eframe::Storage) {
+        let device = if self.connect_to_the_device_automatically_on_startup {
+            self.device_addr.clone()
+        } else {
+            String::new()
+        };
+        storage.set_string(Self::LAST_ADDR_KEY, device);
+        
     }
 }

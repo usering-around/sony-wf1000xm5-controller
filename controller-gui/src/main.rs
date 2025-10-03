@@ -17,7 +17,17 @@ pub fn main() -> io::Result<()> {
     let mut winit_app = eframe::create_native(
         "External Eventloop Application",
         options,
-        Box::new(|_| Ok(Box::new(App::new()))),
+        Box::new(|cc| {
+            let mut app = App::default();
+            if let Some(storage) = cc.storage
+                && let Some(addr) = storage.get_string(App::LAST_ADDR_KEY)
+                && !addr.is_empty()
+            {
+                app.last_device_addr = addr;
+                app.connect_to_the_device_automatically_on_startup = true;
+            }
+            Ok(Box::new(app))
+        }),
         &eventloop,
     );
 
