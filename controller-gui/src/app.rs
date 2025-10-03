@@ -341,7 +341,7 @@ impl App {
                             .text(RichText::new("16000").strong()),
                     ),
                 ];
-                if responses.iter().any(|r| r.drag_stopped()) {
+                if responses.iter().any(|r| r.changed()) {
                     Self::send_command(
                         request_send,
                         Command::ChangeEqualizerSetting {
