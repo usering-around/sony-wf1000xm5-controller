@@ -15,7 +15,7 @@ pub fn main() -> io::Result<()> {
     eventloop.set_control_flow(ControlFlow::Poll);
 
     let mut winit_app = eframe::create_native(
-        "External Eventloop Application",
+        "Sony-WF1000XM5 GUI",
         options,
         Box::new(|cc| {
             let mut app = App::default();
