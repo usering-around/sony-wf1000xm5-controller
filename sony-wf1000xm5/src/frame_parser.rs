@@ -3,7 +3,7 @@ use thiserror::Error;
 use crate::{MessageType, checksum};
 
 /// A parser which can parse the message format of headphones
-/// and return a buffer containing the message.
+/// and return a Message struct containing the payload.
 pub struct FrameParser {
     msg_len: Option<usize>,
     buf: Vec<u8>,
@@ -11,8 +11,7 @@ pub struct FrameParser {
 }
 
 pub enum FrameParserResult<'a> {
-    /// We got the whole frame. You can parse buffer successfully
-    /// Note that buf is already unescaped, so only parsing is necessary.
+    /// We got the whole frame. You can try to parse the payload
     Ready { msg: Message<'a>, consumed: usize },
     /// We need more bytes to complete the frame.
     /// If bytes_needed is Some, then it represents the amount of bytes needed until the completion of the frame.
