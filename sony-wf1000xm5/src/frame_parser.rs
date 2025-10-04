@@ -8,6 +8,7 @@ pub struct FrameParser {
     msg_len: Option<usize>,
     buf: Vec<u8>,
     need_escape: bool,
+    got_an_error: bool,
 }
 
 pub enum FrameParserResult<'a> {
@@ -38,7 +39,7 @@ pub struct Message<'a> {
     pub checksum: Result<u8, InvalidChecksum>,
 }
 
-#[derive(Debug, Error)]
+#[derive(Debug, Error, PartialEq, Eq)]
 pub enum FramerParserError {
     #[error("The given bytes do not start with the MESSAGE_HEADER value.")]
     NoMessageHeader,
@@ -49,14 +50,17 @@ impl FrameParser {
             msg_len: None,
             buf: Vec::new(),
             need_escape: false,
+            got_an_error: false,
         }
     }
+
     pub fn parse<'a>(&'a mut self, bytes: &[u8]) -> FrameParserResult<'a> {
         if self.done() {
-            self.buf.clear();
+            self.reset_state();
         }
         for (idx, byte) in bytes.iter().enumerate() {
             if let Err(err) = self.parse_byte(*byte) {
+                self.got_an_error = true;
                 return FrameParserResult::Error {
                     err,
                     consumed: idx + 1,
@@ -72,6 +76,11 @@ impl FrameParser {
         FrameParserResult::Incomplete {
             bytes_needed: self.bytes_needed(),
         }
+    }
+
+    fn reset_state(&mut self) {
+        self.buf.clear();
+        self.got_an_error = false;
     }
 
     /// panics if `buf.len() < 9`
@@ -98,7 +107,7 @@ impl FrameParser {
     }
 
     fn done(&self) -> bool {
-        self.bytes_needed().is_some_and(|n| n == 0)
+        self.got_an_error || self.bytes_needed().is_some_and(|n| n == 0)
     }
     fn bytes_needed(&self) -> Option<usize> {
         let msg_len = self.msg_len?;
@@ -206,6 +215,9 @@ mod test {
         match parser.parse(&msg) {
             FrameParserResult::Error { err, consumed } => {
                 println!("good: {err}, {consumed}");
+                assert_eq!(consumed, 1);
+                assert_eq!(err, FramerParserError::NoMessageHeader);
+                assert!(parser.done());
             }
             _ => panic!("bad; shouldn't have panicked! t"),
         }
