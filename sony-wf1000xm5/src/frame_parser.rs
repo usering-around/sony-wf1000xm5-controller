@@ -1,5 +1,7 @@
 use thiserror::Error;
 
+use crate::{MessageType, checksum};
+
 /// A parser which can parse the message format of headphones
 /// and return a buffer containing the message.
 pub struct FrameParser {
@@ -8,10 +10,10 @@ pub struct FrameParser {
     need_escape: bool,
 }
 
-pub enum FrameParserResult<'b> {
+pub enum FrameParserResult<'a> {
     /// We got the whole frame. You can parse buffer successfully
     /// Note that buf is already unescaped, so only parsing is necessary.
-    Ready { buf: &'b [u8], consumed: usize },
+    Ready { msg: Message<'a>, consumed: usize },
     /// We need more bytes to complete the frame.
     /// If bytes_needed is Some, then it represents the amount of bytes needed until the completion of the frame.
     Incomplete { bytes_needed: Option<usize> },
@@ -20,6 +22,21 @@ pub enum FrameParserResult<'b> {
         err: FramerParserError,
         consumed: usize,
     },
+}
+
+#[derive(Debug, Error, PartialEq, Eq)]
+#[error("Invalid checksum, got: 0x{got:x}, expected: 0x{expected:x}")]
+pub struct InvalidChecksum {
+    pub expected: u8,
+    pub got: u8,
+}
+
+#[derive(Debug)]
+pub struct Message<'a> {
+    pub kind: Result<MessageType, u8>,
+    pub seq_num: u8,
+    pub payload: &'a [u8],
+    pub checksum: Result<u8, InvalidChecksum>,
 }
 
 #[derive(Debug, Error)]
@@ -48,13 +65,34 @@ impl FrameParser {
             }
             if self.done() {
                 return FrameParserResult::Ready {
-                    buf: &self.buf,
+                    msg: Self::parse_message(&self.buf),
                     consumed: idx + 1,
                 };
             }
         }
         FrameParserResult::Incomplete {
             bytes_needed: self.bytes_needed(),
+        }
+    }
+
+    fn parse_message(buf: &'_ [u8]) -> Message<'_> {
+        let kind = MessageType::from_byte(buf[1]).ok_or(buf[1]);
+        let seq_num = buf[2];
+        let supposed_checksum = buf[buf.len() - 2];
+        let real_checksum = checksum(&buf[1..buf.len() - 2]);
+        let checksum = if supposed_checksum == real_checksum {
+            Ok(real_checksum)
+        } else {
+            Err(InvalidChecksum {
+                expected: real_checksum,
+                got: supposed_checksum,
+            })
+        };
+        Message {
+            kind,
+            seq_num,
+            payload: &buf[7..buf.len() - 2],
+            checksum,
         }
     }
 
@@ -80,8 +118,11 @@ impl FrameParser {
                 return Err(FramerParserError::NoMessageHeader);
             }
             self.buf.push(byte);
-        } else if self.buf.len() == 1 || self.buf.len() == 2 {
+        } else if self.buf.len() == 1 {
             // we read the header, we now read the message type and seq number
+            self.buf.push(byte);
+        } else if self.buf.len() == 2 {
+            // seq num
             self.buf.push(byte);
         } else if self.buf.len() >= 3 && self.buf.len() <= 6 {
             // we already read the message type and seq number, now we read the length
@@ -114,19 +155,7 @@ mod test {
     use super::*;
     #[test]
     fn basic_messages() {
-        let bytes = vec![
-            MESSAGE_HEADER,
-            0x1,
-            0x1,
-            0x0,
-            0x0,
-            0x0,
-            0x0,
-            0x0,
-            MESSAGE_TRAILER,
-        ];
         let good_messages = vec![
-            bytes,
             build_command(&crate::command::Command::GetAncStatus, 0),
             build_command(&crate::command::Command::GetEqualizerSettings, 0x69),
             build_command(
@@ -146,11 +175,14 @@ mod test {
             ),
         ];
         let mut parser = FrameParser::new();
-        for msg in good_messages {
-            match parser.parse(&msg) {
-                FrameParserResult::Ready { buf, consumed } => {
-                    assert_eq!(consumed, msg.len());
-                    assert_eq!(buf, msg);
+        for bytes in good_messages {
+            match parser.parse(&bytes) {
+                FrameParserResult::Ready { msg, consumed } => {
+                    assert_eq!(msg.checksum, Ok(bytes[bytes.len() - 2]));
+                    assert_eq!(msg.kind, Ok(MessageType::from_byte(bytes[1]).unwrap()));
+                    assert_eq!(msg.seq_num, bytes[2]);
+                    assert_eq!(consumed, bytes.len());
+                    assert_eq!(bytes, parser.buf);
                 }
                 _ => panic!(
                     "bad; shouldn't have panicked! this message is theoritcally fine as far as the 'frame'  is concerned."
@@ -178,6 +210,61 @@ mod test {
                 println!("good: {err}, {consumed}");
             }
             _ => panic!("bad; shouldn't have panicked! t"),
+        }
+
+        let bad_checksum = vec![
+            MESSAGE_HEADER,
+            0x1,
+            0x1,
+            0x0,
+            0x0,
+            0x0,
+            0x0,
+            0x0,
+            MESSAGE_TRAILER,
+        ];
+        match parser.parse(&bad_checksum) {
+            FrameParserResult::Ready { msg, consumed } => {
+                assert_eq!(consumed, bad_checksum.len());
+                assert_eq!(msg.kind, Ok(MessageType::Ack));
+                assert_eq!(
+                    msg.checksum,
+                    Err(InvalidChecksum {
+                        expected: 2,
+                        got: 0
+                    })
+                );
+                assert_eq!(msg.seq_num, 1);
+            }
+            _ => panic!("bad; shouldn't have panicked! t"),
+        }
+
+        let bad_msg_type = vec![
+            MESSAGE_HEADER,
+            0x32,
+            0x2,
+            0x0,
+            0x0,
+            0x0,
+            0x0,
+            0x34,
+            MESSAGE_TRAILER,
+        ];
+        match parser.parse(&bad_msg_type) {
+            FrameParserResult::Ready { msg, consumed } => {
+                assert_eq!(consumed, bad_msg_type.len());
+                assert_eq!(msg.kind, Err(0x32));
+                assert_eq!(msg.checksum, Ok(bad_msg_type[bad_msg_type.len() - 2]),);
+                assert_eq!(msg.seq_num, bad_msg_type[2]);
+            }
+
+            FrameParserResult::Incomplete { bytes_needed } => {
+                panic!("incomplete message? {bytes_needed:?}");
+            }
+
+            FrameParserResult::Error { err, consumed } => {
+                panic!("error? {err:?}, consumed: {consumed}")
+            }
         }
     }
 }

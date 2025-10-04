@@ -1,6 +1,6 @@
 pub mod command;
 pub mod frame_parser;
-pub mod message;
+pub mod payload;
 
 const MESSAGE_HEADER: u8 = 0x3e;
 const MESSAGE_TRAILER: u8 = 0x3c;
@@ -16,7 +16,6 @@ pub enum MessageType {
     Ack = 0x1,
     Command1 = 0xc,
     Command2 = 0xe,
-    Unknown = 0xff,
 }
 impl MessageType {
     pub fn from_byte(byte: u8) -> Option<Self> {
@@ -24,7 +23,6 @@ impl MessageType {
             0x1 => Self::Ack,
             0xc => Self::Command1,
             0xe => Self::Command2,
-            0xff => Self::Unknown,
             _ => return None,
         })
     }

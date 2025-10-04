@@ -11,7 +11,7 @@ use sony_wf1000xm5::{
     MessageType,
     command::Command,
     frame_parser::{FrameParser, FrameParserResult},
-    message::Payload,
+    payload::Payload,
 };
 use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},
@@ -97,21 +97,22 @@ pub async fn thread_main(
 
             while stream.read(&mut buffer).await.is_ok() {
                 match frame_parser.parse(&buffer) {
-                    FrameParserResult::Ready { buf, .. } => {
-                        let msg = match sony_wf1000xm5::message::parse_message(buf)  {
-                            Ok(m) => m,
-                            Err(e) => {
-                                log::warn!("error while parsing message: {e}");
-                                continue;
-                            }
-                        };
+                    FrameParserResult::Ready { msg, .. } => {
+                        if let Err(e) = msg.kind {
+                            log::warn!("unknown message type: {e}; ignoring");
+                            continue;
+                        }
+                        if let Err(e) = msg.checksum.as_ref() {
+                            log::warn!("bad checksum: {e}; ignoring" );
+                            continue;
+                        }
                         debug!("msg: {:x?}", msg);
-                        if msg.kind == MessageType::Ack {
+                        if msg.kind == Ok(MessageType::Ack) {
                             seq_number = msg.seq_num;
                             waiting_for_ack = false;
                             break;
-                        } else if msg.kind == MessageType::Command1 {
-                            let payload = sony_wf1000xm5::message::parse_payload(msg.payload);
+                        } else if msg.kind == Ok(MessageType::Command1) {
+                            let payload = sony_wf1000xm5::payload::parse_payload(msg.payload);
                             debug!("payload: {:x?}", payload);
 
                             let command = sony_wf1000xm5::command::build_command(&Command::Ack, msg.seq_num);

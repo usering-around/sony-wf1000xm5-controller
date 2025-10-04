@@ -3,7 +3,7 @@ use eframe::egui::{self, Context, RichText, Slider, Ui};
 use futures::{StreamExt, pin_mut};
 use sony_wf1000xm5::{
     command::{AncMode, BatteryType, Command, EqualizerPreset},
-    message::{BatteryLevel, Codec, Payload},
+    payload::{BatteryLevel, Codec, Payload},
 };
 use std::collections::HashMap;
 use std::rc::Rc;
