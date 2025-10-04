@@ -118,11 +118,8 @@ impl FrameParser {
                 return Err(FramerParserError::NoMessageHeader);
             }
             self.buf.push(byte);
-        } else if self.buf.len() == 1 {
+        } else if self.buf.len() == 1 || self.buf.len() == 2 {
             // we read the header, we now read the message type and seq number
-            self.buf.push(byte);
-        } else if self.buf.len() == 2 {
-            // seq num
             self.buf.push(byte);
         } else if self.buf.len() >= 3 && self.buf.len() <= 6 {
             // we already read the message type and seq number, now we read the length
