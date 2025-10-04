@@ -74,7 +74,9 @@ impl FrameParser {
         }
     }
 
+    /// panics if `buf.len() < 9`
     fn parse_message(buf: &'_ [u8]) -> Message<'_> {
+        assert!(buf.len() >= 9);
         let kind = MessageType::from_byte(buf[1]).ok_or(buf[1]);
         let seq_num = buf[2];
         let supposed_checksum = buf[buf.len() - 2];
