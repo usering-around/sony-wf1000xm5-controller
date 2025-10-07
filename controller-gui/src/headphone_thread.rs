@@ -60,7 +60,7 @@ pub async fn thread_main(
     let init_command = sony_wf1000xm5::command::build_command(&Command::Init, seq_number);
     debug!("init_command: {:x?}", init_command);
     let mut tries = 3;
-    stream.write_all(&init_command).await.unwrap();
+    stream.write_all(&init_command).await?;
     loop {
         tokio::select! {
             _ = stop_rx.recv() => {
@@ -77,7 +77,7 @@ pub async fn thread_main(
                     return Err(bluer::Error { kind: bluer::ErrorKind::AuthenticationTimeout, message: "max retries failed; try connecting again".to_string() })
                 }
                 debug!("init failed; retrying...");
-                stream.write_all(&init_command).await.unwrap();
+                stream.write_all(&init_command).await?;
                 tries -= 1;
             }
 
