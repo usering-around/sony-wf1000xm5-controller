@@ -14,7 +14,6 @@ use tokio::sync::mpsc;
 use crate::async_resource::{AsyncResource, ResourceStatus};
 use crate::headphone_thread;
 
-const BATTERY_POLL_TIME_SEC: u64 = 60;
 struct BtInfo {
     is_powered: bool,
 }
@@ -42,7 +41,6 @@ struct HeadphoneState {
     codec: Option<Codec>,
     sound_pressure_db: Option<usize>,
     sound_pressure_last_poll: Option<Instant>,
-    last_battery_poll: Option<Instant>,
 }
 
 #[derive(Default)]
@@ -272,21 +270,6 @@ impl App {
         request_send: &mut Rc<RefCell<Option<mpsc::UnboundedSender<Command>>>>,
     ) {
         let size = 25.0;
-        let last_battey_poll = state.last_battery_poll.unwrap_or(Instant::now());
-        if Instant::now() - last_battey_poll > Duration::from_secs(BATTERY_POLL_TIME_SEC) {
-            Self::send_command(
-                request_send,
-                Command::GetBatteryStatus {
-                    battery_type: BatteryType::Headphones,
-                },
-            );
-            Self::send_command(
-                request_send,
-                Command::GetBatteryStatus {
-                    battery_type: BatteryType::Case,
-                },
-            );
-        }
         if let Some(left_battery) = state.left_ear_battery
             && let Some(right_battery) = state.right_ear_battery
             && let Some(case_battery) = state.case_battery
