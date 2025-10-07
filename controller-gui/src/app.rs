@@ -19,6 +19,7 @@ struct BtInfo {
     is_powered: bool,
 }
 
+#[derive(PartialEq, Eq)]
 struct Equalizer {
     preset: EqualizerPreset,
     clear_bass: i8,
@@ -294,6 +295,7 @@ impl App {
         ui.separator();
         if let Some(equalizer) = state.equalizer.as_mut() {
             ui.label(RichText::new("Equalizer").strong().size(size));
+
             ui.menu_button(equalizer.preset.to_string(), |ui| {
                 let responses = [
                     ui.selectable_value(&mut equalizer.preset, EqualizerPreset::Off, "Off"),
@@ -361,9 +363,21 @@ impl App {
                     ),
                 ];
                 if responses.iter().any(|r| r.changed()) {
+                    let preset = if matches!(
+                        equalizer.preset,
+                        EqualizerPreset::Manual
+                            | EqualizerPreset::Custom1
+                            | EqualizerPreset::Custom2
+                    ) {
+                        equalizer.preset
+                    } else {
+                        // we shouldn't (can't?) change non-custom/manual presets
+                        EqualizerPreset::Manual
+                    };
                     Self::send_command(
                         request_send,
                         Command::ChangeEqualizerSetting {
+                            preset,
                             bass_level: equalizer.clear_bass,
                             band_400: equalizer.band_400,
                             band_1000: equalizer.band_1000,

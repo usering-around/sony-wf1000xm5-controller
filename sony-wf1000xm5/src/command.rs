@@ -79,6 +79,8 @@ pub enum Command {
         preset: EqualizerPreset,
     },
     ChangeEqualizerSetting {
+        // the preset to change the equalizer settings for
+        preset: EqualizerPreset,
         bass_level: i8,
         band_400: i8,
         band_1000: i8,
@@ -150,6 +152,7 @@ impl Command {
                 vec![Self::EQUALIZER_SET, 0, *preset as u8, 0]
             }
             Self::ChangeEqualizerSetting {
+                preset,
                 bass_level,
                 band_400,
                 band_1000,
@@ -163,12 +166,16 @@ impl Command {
                 assert!(band_2500.abs() <= 10);
                 assert!(band_6300.abs() <= 10);
                 assert!(band_16000.abs() <= 10);
+                assert!(matches!(
+                    preset,
+                    EqualizerPreset::Manual | EqualizerPreset::Custom1 | EqualizerPreset::Custom2
+                ));
 
                 let data_size = 6; // bass level + 5 bands
                 vec![
                     Self::EQUALIZER_SET,
                     0,
-                    EqualizerPreset::Manual as u8,
+                    *preset as u8,
                     data_size,
                     (bass_level + 10) as u8,
                     (band_400 + 10) as u8,
