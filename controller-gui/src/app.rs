@@ -293,7 +293,7 @@ impl App {
         }
         ui.separator();
         if let Some(equalizer) = state.equalizer.as_mut() {
-            ui.label("Equalizer:");
+            ui.label(RichText::new("Equalizer").strong().size(size));
             ui.menu_button(equalizer.preset.to_string(), |ui| {
                 let responses = [
                     ui.selectable_value(&mut equalizer.preset, EqualizerPreset::Off, "Off"),
@@ -337,27 +337,27 @@ impl App {
                     ui.add(
                         Slider::new(&mut equalizer.band_400, -10..=10)
                             .vertical()
-                            .text(RichText::new("400").strong()),
+                            .text(RichText::new("400 Hz").strong()),
                     ),
                     ui.add(
                         Slider::new(&mut equalizer.band_1000, -10..=10)
                             .vertical()
-                            .text(RichText::new("1000").strong()),
+                            .text(RichText::new("1000 Hz").strong()),
                     ),
                     ui.add(
                         Slider::new(&mut equalizer.band_2500, -10..=10)
                             .vertical()
-                            .text(RichText::new("2500").strong()),
+                            .text(RichText::new("2500 Hz").strong()),
                     ),
                     ui.add(
                         Slider::new(&mut equalizer.band_6300, -10..=10)
                             .vertical()
-                            .text(RichText::new("6300").strong()),
+                            .text(RichText::new("6300 Hz").strong()),
                     ),
                     ui.add(
                         Slider::new(&mut equalizer.band_16000, -10..=10)
                             .vertical()
-                            .text(RichText::new("16000").strong()),
+                            .text(RichText::new("16000 Hz").strong()),
                     ),
                 ];
                 if responses.iter().any(|r| r.changed()) {
