@@ -113,7 +113,7 @@ pub async fn thread_main(
                             waiting_for_ack = false;
                             break;
                         } else if msg.kind == Ok(MessageType::Command1) || msg.kind == Ok(MessageType::Command2) {
-                            let payload = sony_wf1000xm5::payload::parse_payload(msg.payload);
+                            let payload = sony_wf1000xm5::payload::parse_payload(msg.payload, msg.kind.unwrap());
                             debug!("payload: {:x?}", payload);
 
                             let command = sony_wf1000xm5::command::build_command(&Command::Ack, msg.seq_num);
@@ -150,10 +150,10 @@ pub async fn thread_main(
         }
 
             Some(command) = command_rx.recv(), if !waiting_for_ack => {
-                let command = sony_wf1000xm5::command::build_command(&command, seq_number);
-                debug!("sending: {:?}", command);
+                let command_bytes = sony_wf1000xm5::command::build_command(&command, seq_number);
+                debug!("sending: {:?}, raw: {:x?}", command, command_bytes);
                 stream
-                .write_all(&command)
+                .write_all(&command_bytes)
                 .await?;
                 waiting_for_ack = true;
             }

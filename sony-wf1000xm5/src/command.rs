@@ -64,6 +64,8 @@ impl BatteryType {
         })
     }
 }
+
+#[derive(Debug)]
 pub enum Command {
     Init,
     Ack,
@@ -93,6 +95,10 @@ pub enum Command {
     },
     GetEqualizerSettings,
     GetCodec,
+    SoundPressureMeasure {
+        on: bool,
+    },
+    GetSoundPressure,
 }
 
 impl Command {
@@ -197,6 +203,16 @@ impl Command {
             Self::GetCodec => {
                 vec![Self::CODEC_GET, 2]
             }
+
+            Self::SoundPressureMeasure { on } => {
+                // from HCI logs start: 3e0e0000000004580301006e3c
+                // from HCI logs stop: 3e0e0000000004580301016f3c
+                vec![0x58, 0x03, 0x01, if *on { 0x00 } else { 0x01 }]
+            }
+            Self::GetSoundPressure => {
+                // from HCI logs: 3e0e01000000025a036e3c
+                vec![0x5a, 0x03]
+            }
         }
     }
 }
@@ -238,6 +254,10 @@ pub fn build_command(command: &Command, seq_number: u8) -> Vec<u8> {
         | Command::Init
         | Command::GetBatteryStatus { .. }
         | Command::GetEqualizerSettings => MessageType::Command1,
+
+        // from hci logs: SoundPressureMeasure: 3e0e0000000004580301006e3c
+        // from hci log: GetSoundPressure: 3e0e01000000025a036e3c
+        Command::SoundPressureMeasure { .. } | Command::GetSoundPressure => MessageType::Command2,
 
         Command::Ack => MessageType::Ack,
     };

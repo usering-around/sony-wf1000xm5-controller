@@ -40,6 +40,8 @@ struct HeadphoneState {
     ambient_slider: Option<usize>,
     voice_filtering: Option<bool>,
     codec: Option<Codec>,
+    sound_pressure_db: Option<usize>,
+    sound_pressure_last_poll: Option<Instant>,
     last_battery_poll: Option<Instant>,
 }
 
@@ -239,6 +241,20 @@ impl App {
             Payload::Codec { codec } => {
                 self.headphone_state.codec = Some(codec);
             }
+
+            Payload::SoundPressureMeasureReply { is_on } => {
+                if is_on {
+                    Self::send_command(&self.request_send, Command::GetSoundPressure);
+                    self.headphone_state.sound_pressure_last_poll = Some(Instant::now());
+                } else {
+                    self.headphone_state.sound_pressure_db = None;
+                    self.headphone_state.sound_pressure_last_poll = None;
+                }
+            }
+
+            Payload::SoundPressure { db } => {
+                self.headphone_state.sound_pressure_db = Some(db);
+            }
         }
     }
 
@@ -291,6 +307,27 @@ impl App {
                     .size(size)
                     .strong(),
             );
+        }
+        ui.separator();
+        if let Some(sound_pressure) = state.sound_pressure_db
+            && let Some(last_poll_time) = &mut state.sound_pressure_last_poll
+        {
+            if Instant::now() - *last_poll_time > Duration::from_secs(1) {
+                Self::send_command(request_send, Command::GetSoundPressure);
+                *last_poll_time = Instant::now();
+            }
+            ui.label(
+                RichText::new(format!("sound pressure: {sound_pressure} dB"))
+                    .strong()
+                    .size(size),
+            );
+            if ui.button("stop?").clicked() {
+                Self::send_command(request_send, Command::SoundPressureMeasure { on: false });
+            }
+        } else {
+            if ui.button("Start sound pressure measure?").clicked() {
+                Self::send_command(request_send, Command::SoundPressureMeasure { on: true });
+            }
         }
         ui.separator();
         if let Some(equalizer) = state.equalizer.as_mut() {

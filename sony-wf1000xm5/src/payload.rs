@@ -1,6 +1,9 @@
 use thiserror::Error;
 
-use crate::command::{AncMode, BatteryType, EqualizerPreset};
+use crate::{
+    MessageType,
+    command::{AncMode, BatteryType, EqualizerPreset},
+};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum PayloadType {
@@ -13,22 +16,35 @@ pub enum PayloadType {
     AncStatusNotify,
     CodecGet,
     CodecNotify,
+    SoundPressureMeasureReply,
+    PressureGet,
 }
 
 impl PayloadType {
-    pub fn from_byte(byte: u8) -> Option<Self> {
-        Some(match byte {
-            0x1 => Self::InitReply,
-            0x13 => Self::CodecGet,
-            0x15 => Self::CodecNotify,
-            0x23 => Self::BatteryLevel,
-            0x25 => Self::BatteryLevelNotify,
-            0x57 => Self::Equalizer,
-            0x59 => Self::EqualizerNotify,
-            0x67 => Self::AncStatus,
-            0x69 => Self::AncStatusNotify,
-
-            _ => return None,
+    pub fn from_byte(msg_type: MessageType, byte: u8) -> Option<Self> {
+        Some(match msg_type {
+            MessageType::Ack => return None,
+            MessageType::Command1 => match byte {
+                0x1 => Self::InitReply,
+                0x13 => Self::CodecGet,
+                0x15 => Self::CodecNotify,
+                0x23 => Self::BatteryLevel,
+                0x25 => Self::BatteryLevelNotify,
+                0x57 => Self::Equalizer,
+                0x59 => Self::EqualizerNotify,
+                0x67 => Self::AncStatus,
+                0x69 => Self::AncStatusNotify,
+                _ => return None,
+            },
+            MessageType::Command2 => {
+                match byte {
+                    // from hci log: 3e0e0000000004590301006f3c
+                    0x59 => Self::SoundPressureMeasureReply,
+                    // from hci logs: 3e0e01000000045b034203b63c
+                    0x5b => Self::PressureGet,
+                    _ => return None,
+                }
+            }
         })
     }
 }
@@ -94,6 +110,12 @@ pub enum Payload {
     Codec {
         codec: Codec,
     },
+    SoundPressureMeasureReply {
+        is_on: bool,
+    },
+    SoundPressure {
+        db: usize,
+    },
 }
 
 #[derive(Debug, Error)]
@@ -112,12 +134,15 @@ pub enum ParsePayloadError {
     PayloadTooSmall { payload_type: PayloadType },
 }
 
-pub fn parse_payload(payload: &[u8]) -> std::result::Result<Payload, ParsePayloadError> {
+pub fn parse_payload(
+    payload: &[u8],
+    message_type: MessageType,
+) -> std::result::Result<Payload, ParsePayloadError> {
     if payload.is_empty() {
         return Err(ParsePayloadError::Empty);
     }
 
-    let payload_type = PayloadType::from_byte(payload[0])
+    let payload_type = PayloadType::from_byte(message_type, payload[0])
         .ok_or(ParsePayloadError::UnknownPayloadType { kind: payload[0] })?;
 
     Ok(match payload_type {
@@ -193,6 +218,31 @@ pub fn parse_payload(payload: &[u8]) -> std::result::Result<Payload, ParsePayloa
             let codec = Codec::from_byte(payload[2])
                 .ok_or(ParsePayloadError::UnknownCodec { codec: payload[2] })?;
             Payload::Codec { codec }
+        }
+
+        PayloadType::PressureGet => {
+            if payload.len() < 3 {
+                return Err(ParsePayloadError::PayloadTooSmall { payload_type });
+            }
+            // PressureGet logs:
+            // hci log 1: 3e0e01000000045b034203b63c
+            // hci log 2: 3e0e00000000045b034003b33c
+            // payload[2] (0x42 top 0x40 bottom) seems to be the value as it changes between different logs.
+            // Unsure what the 03 which wrap it signal.
+            Payload::SoundPressure {
+                db: payload[2] as usize,
+            }
+        }
+
+        // when it turns on sends: 3e0e0000000004590301006f3c
+        // when it turns off: 3e0e010000000459030101713c
+        PayloadType::SoundPressureMeasureReply => {
+            if payload.len() < 4 {
+                return Err(ParsePayloadError::PayloadTooSmall { payload_type });
+            }
+            Payload::SoundPressureMeasureReply {
+                is_on: payload[3] == 0,
+            }
         }
     })
 }
