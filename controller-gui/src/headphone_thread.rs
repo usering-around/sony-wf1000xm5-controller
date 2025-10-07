@@ -91,6 +91,7 @@ pub async fn thread_main(
         tokio::select! {
 
             _ = stop_rx.recv() => {
+                debug!("event loop received stop");
                 return Ok(());
             }
             Ok(_) = stream.peek(&mut buffer) => {
@@ -111,7 +112,7 @@ pub async fn thread_main(
                             seq_number = msg.seq_num;
                             waiting_for_ack = false;
                             break;
-                        } else if msg.kind == Ok(MessageType::Command1) {
+                        } else if msg.kind == Ok(MessageType::Command1) || msg.kind == Ok(MessageType::Command2) {
                             let payload = sony_wf1000xm5::payload::parse_payload(msg.payload);
                             debug!("payload: {:x?}", payload);
 
