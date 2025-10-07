@@ -5,10 +5,10 @@ use sony_wf1000xm5::{
     command::{AncMode, BatteryType, Command, EqualizerPreset},
     payload::{BatteryLevel, Codec, Payload},
 };
+use std::cell::RefCell;
 use std::collections::HashMap;
 use std::rc::Rc;
 use std::time::Duration;
-use std::{cell::RefCell, time::Instant};
 use tokio::sync::mpsc;
 
 use crate::async_resource::{AsyncResource, ResourceStatus};
@@ -40,7 +40,7 @@ struct HeadphoneState {
     voice_filtering: Option<bool>,
     codec: Option<Codec>,
     sound_pressure_db: Option<usize>,
-    sound_pressure_last_poll: Option<Instant>,
+    sound_pressure_poll_task: AsyncResource<()>,
 }
 
 #[derive(Default)]
@@ -243,10 +243,41 @@ impl App {
             Payload::SoundPressureMeasureReply { is_on } => {
                 if is_on {
                     Self::send_command(&self.request_send, Command::GetSoundPressure);
-                    self.headphone_state.sound_pressure_last_poll = Some(Instant::now());
+                    // we create the polling task in another thread since the GUI thread sleeps when there is no user interaction
+                    let request_send = self.request_send.borrow().as_ref().unwrap().clone();
+                    self.headphone_state
+                        .sound_pressure_poll_task
+                        .set(async move {
+                            let (stop_tx, mut stop_rx) = mpsc::channel(1);
+                            let _ = tokio::task::spawn_blocking(move || {
+                                tokio::runtime::Builder::new_current_thread()
+                                    .enable_time()
+                                    .build()
+                                    .unwrap()
+                                    .block_on(async move {
+                                        loop {
+                                            tokio::select! {
+                                                _ = stop_rx.recv() => {
+                                                    break;
+                                                }
+
+                                                _ = tokio::time::sleep(Duration::from_secs(1)) => {
+                                                    if request_send.send(Command::GetSoundPressure).is_err()
+                                                    {
+                                                        break;
+                                                    }
+                                                }
+                                            }
+                                        }
+                                        log::debug!("sound pressure task dead");
+                                    });
+                            })
+                            .await;
+                            let _ = stop_tx.send(());
+                        });
                 } else {
                     self.headphone_state.sound_pressure_db = None;
-                    self.headphone_state.sound_pressure_last_poll = None;
+                    self.headphone_state.sound_pressure_poll_task.cancel();
                 }
             }
 
@@ -292,13 +323,7 @@ impl App {
             );
         }
         ui.separator();
-        if let Some(sound_pressure) = state.sound_pressure_db
-            && let Some(last_poll_time) = &mut state.sound_pressure_last_poll
-        {
-            if Instant::now() - *last_poll_time > Duration::from_secs(1) {
-                Self::send_command(request_send, Command::GetSoundPressure);
-                *last_poll_time = Instant::now();
-            }
+        if let Some(sound_pressure) = state.sound_pressure_db {
             ui.label(
                 RichText::new(format!("sound pressure: {sound_pressure} dB"))
                     .strong()
