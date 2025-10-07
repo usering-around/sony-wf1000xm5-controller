@@ -595,10 +595,8 @@ impl eframe::App for App {
 
     fn on_exit(&mut self, _gl: Option<&eframe::glow::Context>) {
         // cancel the connection task and all communication to it, since it blocks up the UI on exit
+
         self.connection_task.cancel();
-        self.request_send.take();
-        self.response_recv.take();
-        self.stop_connection_task.take();
     }
 
     fn save(&mut self, storage: &mut dyn eframe::Storage) {
