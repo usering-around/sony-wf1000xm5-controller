@@ -5,3 +5,11 @@ A (very) simple UI program to control the Sony-WF1000XM5 earbuds on Linux. Only 
 
 
 ## This program is not affilated with Sony. Use at your own risk.
+
+
+### Currently implemented features:
+- Active Noise Cancelling configuration
+- Equalizer Configuration
+- Measuring sound pressure
+- Getting Codec
+- Getting battery levels
