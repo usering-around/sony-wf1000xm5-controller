@@ -1,5 +1,5 @@
 use bluer::{Adapter, AdapterEvent, Device, Session};
-use eframe::egui::{self, Context, RichText, Slider, Ui};
+use eframe::egui::{self, Context, RichText, ScrollArea, Slider, Ui};
 use futures::{StreamExt, pin_mut};
 use sony_wf1000xm5::{
     command::{AncMode, BatteryType, Command, EqualizerPreset},
@@ -462,114 +462,120 @@ impl eframe::App for App {
                 self.handle_payload(payload);
             }
         }
-        egui::CentralPanel::default().show(ctx, |ui| match self.bt_info.get() {
-            ResourceStatus::Ready(bt_info_result) => match bt_info_result.as_ref() {
-                Ok(bt_info) => {
-                    ui.label(format!("Bluetooth enabled: {}", bt_info.is_powered));
-                    if ui.button("refresh").clicked() {
-                        self.bt_info.clear();
-                    }
-                    if !bt_info.is_powered {
-                        ui.label("Bluetooth is not on. Turn it on and press refresh.");
-                    } else {
-                        self.start_device_discovery_task(ctx, ui);
-                        for (device, dev) in self.bt_devices.borrow().iter() {
-                            ui.radio_value(&mut self.device, device.clone(), device);
-                            if self.device == *device {
-                                self.device_addr = dev.address().to_string();
-                            }
-                            if self.device.is_empty()
-                                && let Some(addr) = self.last_connected_addr()
-                                && dev.address().to_string() == *addr
-                                && !self.found_last_device
-                            {
-                                self.device = device.clone();
-                                self.found_last_device = true;
-                            }
-                        }
 
-                        if !self.device.is_empty() {
-                            #[allow(clippy::collapsible_if)]
-                            if ui.button("connect?").clicked()
-                                || (self.found_last_device && !self.tried_connecting_to_last_device)
-                            {
-                                // even if we didn't find the last device, if you try to connect to something before we found the device,
-                                // we won't connect.
-                                self.tried_connecting_to_last_device = true;
-                                self.is_connected = false;
-                                self.headphone_state = HeadphoneState::default();
-                                self.start_connection_thread(ctx);
+        egui::CentralPanel::default().show(ctx, |ui| {
+            ScrollArea::vertical().show(ui, |ui| {
+                match self.bt_info.get() {
+                    ResourceStatus::Ready(bt_info_result) => match bt_info_result.as_ref() {
+                        Ok(bt_info) => {
+                            ui.label(format!("Bluetooth enabled: {}", bt_info.is_powered));
+                            if ui.button("refresh").clicked() {
+                                self.bt_info.clear();
                             }
-
-                            ui.checkbox(
-                                &mut self.connect_to_the_device_automatically_on_startup,
-                                "Connect to this device automatically next time",
-                            );
-                        }
-
-                        if self.is_connected {
-                            ui.label("Connected!");
-                            Self::draw_headphones_info(
-                                &mut self.headphone_state,
-                                ui,
-                                &mut self.request_send,
-                            );
-                        } else {
-                            match self.connection_task.get() {
-                                ResourceStatus::Ready(result) => {
-                                    if let Err(e) = result.as_ref() {
-                                        ui.label(format!("Error while connecting: {e}"));
-                                    } else {
-                                        ui.label("Connection task was interrupted.");
+                            if !bt_info.is_powered {
+                                ui.label("Bluetooth is not on. Turn it on and press refresh.");
+                            } else {
+                                self.start_device_discovery_task(ctx, ui);
+                                for (device, dev) in self.bt_devices.borrow().iter() {
+                                    ui.radio_value(&mut self.device, device.clone(), device);
+                                    if self.device == *device {
+                                        self.device_addr = dev.address().to_string();
                                     }
-                                    if ui.button("retry?").clicked() {
-                                        self.connection_task.clear();
+                                    if self.device.is_empty()
+                                        && let Some(addr) = self.last_connected_addr()
+                                        && dev.address().to_string() == *addr
+                                        && !self.found_last_device
+                                    {
+                                        self.device = device.clone();
+                                        self.found_last_device = true;
+                                    }
+                                }
+
+                                if !self.device.is_empty() {
+                                    #[allow(clippy::collapsible_if)]
+                                    if ui.button("connect?").clicked()
+                                        || (self.found_last_device
+                                            && !self.tried_connecting_to_last_device)
+                                    {
+                                        // even if we didn't find the last device, if you try to connect to something before we found the device,
+                                        // we won't connect.
+                                        self.tried_connecting_to_last_device = true;
+                                        self.is_connected = false;
+                                        self.headphone_state = HeadphoneState::default();
                                         self.start_connection_thread(ctx);
                                     }
+
+                                    ui.checkbox(
+                                        &mut self.connect_to_the_device_automatically_on_startup,
+                                        "Connect to this device automatically next time",
+                                    );
                                 }
-                                ResourceStatus::Pending => {
-                                    ui.label("Trying to connect...");
-                                    ui.spinner();
-                                }
-                                ResourceStatus::NotInitialized => {
-                                    ui.label("Not connected");
+
+                                if self.is_connected {
+                                    ui.label("Connected!");
+                                    Self::draw_headphones_info(
+                                        &mut self.headphone_state,
+                                        ui,
+                                        &mut self.request_send,
+                                    );
+                                } else {
+                                    match self.connection_task.get() {
+                                        ResourceStatus::Ready(result) => {
+                                            if let Err(e) = result.as_ref() {
+                                                ui.label(format!("Error while connecting: {e}"));
+                                            } else {
+                                                ui.label("Connection task was interrupted.");
+                                            }
+                                            if ui.button("retry?").clicked() {
+                                                self.connection_task.clear();
+                                                self.start_connection_thread(ctx);
+                                            }
+                                        }
+                                        ResourceStatus::Pending => {
+                                            ui.label("Trying to connect...");
+                                            ui.spinner();
+                                        }
+                                        ResourceStatus::NotInitialized => {
+                                            ui.label("Not connected");
+                                        }
+                                    }
                                 }
                             }
                         }
-                    }
-                }
-                Err(e) => {
-                    ui.label(format!("BtInfo: error: {e}"));
-                    if ui.button("retry?").clicked() {
-                        self.bt_info.clear();
-                    }
-                }
-            },
-
-            ResourceStatus::Pending => {
-                ui.label("Getting BtInfo");
-                ui.spinner();
-            }
-
-            ResourceStatus::NotInitialized => {
-                let ui_adapter = self.adapter.clone();
-                self.bt_info.set(async move {
-                    if ui_adapter.borrow().is_none() {
-                        let session = Session::new().await?;
-                        let adapter = session.default_adapter().await?;
-                        {
-                            *ui_adapter.borrow_mut() = Some(adapter.clone());
+                        Err(e) => {
+                            ui.label(format!("BtInfo: error: {e}"));
+                            if ui.button("retry?").clicked() {
+                                self.bt_info.clear();
+                            }
                         }
-                    }
-                    // cloned to not hold it over an await point
-                    // i don't think it actually matters in this case, but might as well to remove the clippy warning
-                    let adapter = { ui_adapter.borrow().as_ref().unwrap().clone() };
+                    },
 
-                    Ok(BtInfo {
-                        is_powered: adapter.is_powered().await?,
-                    })
-                });
-            }
+                    ResourceStatus::Pending => {
+                        ui.label("Getting BtInfo");
+                        ui.spinner();
+                    }
+
+                    ResourceStatus::NotInitialized => {
+                        let ui_adapter = self.adapter.clone();
+                        self.bt_info.set(async move {
+                            if ui_adapter.borrow().is_none() {
+                                let session = Session::new().await?;
+                                let adapter = session.default_adapter().await?;
+                                {
+                                    *ui_adapter.borrow_mut() = Some(adapter.clone());
+                                }
+                            }
+                            // cloned to not hold it over an await point
+                            // i don't think it actually matters in this case, but might as well to remove the clippy warning
+                            let adapter = { ui_adapter.borrow().as_ref().unwrap().clone() };
+
+                            Ok(BtInfo {
+                                is_powered: adapter.is_powered().await?,
+                            })
+                        });
+                    }
+                }
+            });
         });
     }
 
