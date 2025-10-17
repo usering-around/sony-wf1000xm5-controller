@@ -104,7 +104,7 @@ pub enum Payload {
     },
     AncStatus {
         mode: AncMode,
-        ambient_sound_voice_filtering: bool,
+        ambient_sound_voice_passthrough: bool,
         ambient_sound_level: u8,
     },
     Codec {
@@ -199,13 +199,13 @@ pub fn parse_payload(
             } else {
                 AncMode::AmbientSound
             };
-            let ambient_sound_voice_filtering = payload[5] == 1;
+            let ambient_sound_voice_passthrough = payload[5] == 1;
 
             let ambient_sound_level = payload[6];
 
             Payload::AncStatus {
                 mode,
-                ambient_sound_voice_filtering,
+                ambient_sound_voice_passthrough,
                 ambient_sound_level,
             }
         }

@@ -37,7 +37,7 @@ struct HeadphoneState {
     equalizer: Option<Equalizer>,
     anc_mode: Option<AncMode>,
     ambient_slider: Option<usize>,
-    voice_filtering: Option<bool>,
+    voice_passthrough: Option<bool>,
     codec: Option<Codec>,
     sound_pressure_db: Option<usize>,
     sound_pressure_poll_task: AsyncResource<()>,
@@ -228,12 +228,12 @@ impl App {
 
             Payload::AncStatus {
                 mode,
-                ambient_sound_voice_filtering,
+                ambient_sound_voice_passthrough,
                 ambient_sound_level,
             } => {
                 self.headphone_state.anc_mode = Some(mode);
                 self.headphone_state.ambient_slider = Some(ambient_sound_level as usize);
-                self.headphone_state.voice_filtering = Some(ambient_sound_voice_filtering);
+                self.headphone_state.voice_passthrough = Some(ambient_sound_voice_passthrough);
             }
 
             Payload::Codec { codec } => {
@@ -437,7 +437,7 @@ impl App {
         ui.separator();
         if let Some(anc_mode) = state.anc_mode.as_mut()
             && let Some(ambient_slider) = state.ambient_slider.as_mut()
-            && let Some(voice_filtering) = state.voice_filtering.as_mut()
+            && let Some(voice_passthrough) = state.voice_passthrough.as_mut()
         {
             ui.label(RichText::new("ANC configuration:").strong().size(size));
             if ui
@@ -449,7 +449,7 @@ impl App {
                     Command::AncSet {
                         dragging_ambient_sound_slider: false,
                         mode: AncMode::Off,
-                        ambient_sound_voice_filtering: false,
+                        ambient_sound_voice_passthrough: false,
                         ambient_sound_level: 0,
                     },
                 );
@@ -467,7 +467,7 @@ impl App {
                     Command::AncSet {
                         dragging_ambient_sound_slider: false,
                         mode: AncMode::AmbientSound,
-                        ambient_sound_voice_filtering: true,
+                        ambient_sound_voice_passthrough: true,
                         ambient_sound_level: *ambient_slider,
                     },
                 );
@@ -476,7 +476,9 @@ impl App {
                 ui.horizontal(|ui| {
                     let mut should_update = false;
                     should_update |= ui.add(Slider::new(ambient_slider, 0..=20)).drag_stopped();
-                    should_update |= ui.checkbox(voice_filtering, "voice filtering").clicked();
+                    should_update |= ui
+                        .checkbox(voice_passthrough, "voice passthrough")
+                        .clicked();
 
                     if should_update {
                         Self::send_command(
@@ -484,7 +486,7 @@ impl App {
                             Command::AncSet {
                                 dragging_ambient_sound_slider: false,
                                 mode: AncMode::AmbientSound,
-                                ambient_sound_voice_filtering: *voice_filtering,
+                                ambient_sound_voice_passthrough: *voice_passthrough,
                                 ambient_sound_level: *ambient_slider,
                             },
                         );
@@ -504,7 +506,7 @@ impl App {
                     Command::AncSet {
                         dragging_ambient_sound_slider: false,
                         mode: AncMode::ActiveNoiseCanceling,
-                        ambient_sound_voice_filtering: true,
+                        ambient_sound_voice_passthrough: true,
                         ambient_sound_level: *ambient_slider,
                     },
                 );

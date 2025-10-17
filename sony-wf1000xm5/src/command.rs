@@ -72,7 +72,7 @@ pub enum Command {
     AncSet {
         dragging_ambient_sound_slider: bool,
         mode: AncMode,
-        ambient_sound_voice_filtering: bool,
+        ambient_sound_voice_passthrough: bool,
         ambient_sound_level: usize,
     },
     GetAncStatus,
@@ -122,7 +122,7 @@ impl Command {
             Command::AncSet {
                 dragging_ambient_sound_slider,
                 mode,
-                ambient_sound_voice_filtering,
+                ambient_sound_voice_passthrough,
                 ambient_sound_level,
             } => {
                 if *ambient_sound_level > 20 {
@@ -145,7 +145,11 @@ impl Command {
                     out.push(0);
                 }
 
-                out.push(if *ambient_sound_voice_filtering { 1 } else { 0 });
+                out.push(if *ambient_sound_voice_passthrough {
+                    1
+                } else {
+                    0
+                });
                 out.push(*ambient_sound_level as u8);
                 out
             }
