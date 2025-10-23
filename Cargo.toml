@@ -6,3 +6,8 @@ resolver = "3"
 inherits = "release"
 codegen-units = 1
 lto = "fat"
+
+# The profile that 'dist' will build with
+[profile.dist]
+inherits = "release"
+lto = "thin"
