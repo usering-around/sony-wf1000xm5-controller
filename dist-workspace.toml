@@ -11,3 +11,9 @@ ci = "github"
 installers = []
 # Target platforms to build apps for (Rust target-triple syntax)
 targets = ["aarch64-unknown-linux-gnu", "x86_64-unknown-linux-gnu", "x86_64-unknown-linux-musl"]
+
+
+
+[dist.dependencies.apt]
+libdbus-1-dev = "*"
+pkg-config = "*"
