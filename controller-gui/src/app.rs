@@ -49,7 +49,15 @@ impl App {
                     };
 
                     let navigator = web_sys::window().expect("no window?").navigator();
+
                     let serial = navigator.serial();
+                    log::error!("serial: {:?}, {:?}", serial, serial.js_typeof());
+                    if serial.is_undefined() {
+                        self.picker.set_resource(Err(anyhow::anyhow!(
+                            "Web Serial API is not implemented for this browser."
+                        )));
+                        return;
+                    }
                     let options = SerialPortRequestOptions::new();
                     let filters = web_sys::js_sys::JSON::parse(
                         r#"
@@ -73,11 +81,15 @@ impl App {
                     let future = JsFuture::from(serial.request_port_with_options(&options));
                     self.picker.set(async move {
                         use eframe::wasm_bindgen::JsCast;
-                        use web_sys::SerialPort;
 
-                        let port: SerialPort = future.await.unwrap().dyn_into().unwrap();
-                        log::error!("got serial port");
-                        Ok(port)
+                        future
+                            .await
+                            .map(|port| port.dyn_into().unwrap())
+                            .map_err(|e| {
+                                anyhow::anyhow!(
+                                    "Couldn't request port: {e:?}. Try reloading the page."
+                                )
+                            })
                     });
                 }
             }
