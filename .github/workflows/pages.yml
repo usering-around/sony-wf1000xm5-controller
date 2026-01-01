@@ -1,6 +1,8 @@
 name: Github Pages
 
 on:
+  workflow_dispatch:
+
   release:
     types:
       - published
