@@ -14,8 +14,6 @@ struct BtInfo {
     is_powered: bool,
 }
 
-// todo: should probably separate the device handling to a separate App structure,
-// to differentiate more cleanly between the Web and Native app.
 #[derive(Default)]
 pub struct DevicePicker {
     bt_info: AsyncResource<bluer::Result<BtInfo>>,
@@ -180,30 +178,6 @@ impl eframe::App for DevicePicker {
                                         "Connect to this device automatically next time",
                                     );
                                 }
-
-                                // if self.is_connected {
-                                // } else {
-                                //     match self.connection_task.get() {
-                                //         ResourceStatus::Ready(result) => {
-                                //             if let Err(e) = result.as_ref() {
-                                //                 ui.label(format!("Error while connecting: {e}"));
-                                //             } else {
-                                //                 ui.label("Connection task was interrupted.");
-                                //             }
-                                //             if ui.button("retry?").clicked() {
-                                //                 self.connection_task.clear();
-                                //                 self.start_connection_thread(ctx);
-                                //             }
-                                //         }
-                                //         ResourceStatus::Pending => {
-                                //             ui.label("Trying to connect...");
-                                //             ui.spinner();
-                                //         }
-                                //         ResourceStatus::NotInitialized => {
-                                //             ui.label("Not connected");
-                                //         }
-                                //     }
-                                // }
                             }
                         }
                         Err(e) => {
@@ -241,13 +215,6 @@ impl eframe::App for DevicePicker {
                 }
             });
         });
-    }
-
-    #[cfg(not(target_arch = "wasm32"))]
-    fn on_exit(&mut self, _gl: Option<&eframe::glow::Context>) {
-        // cancel the connection task and all communication to it, since it blocks up the UI on exit
-
-        // self.connection_task.cancel();
     }
 
     fn save(&mut self, storage: &mut dyn eframe::Storage) {
