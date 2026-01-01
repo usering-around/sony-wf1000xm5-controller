@@ -1,657 +1,179 @@
-use bluer::{Adapter, AdapterEvent, Device, Session};
-use eframe::egui::{self, Context, RichText, ScrollArea, Slider, Ui};
-use futures::{StreamExt, pin_mut};
-use sony_wf1000xm5::{
-    command::{AncMode, BatteryType, Command, EqualizerPreset},
-    payload::{BatteryLevel, Codec, Payload},
-};
-use std::cell::RefCell;
-use std::collections::HashMap;
-use std::rc::Rc;
-use std::time::Duration;
-use tokio::sync::mpsc;
-
-use crate::async_resource::{AsyncResource, ResourceStatus};
+use crate::async_resource::ResourceStatus;
+#[cfg(not(target_arch = "wasm32"))]
+use crate::device_picker::DevicePicker;
 use crate::headphone_thread;
-
-struct BtInfo {
-    is_powered: bool,
-}
-
-#[derive(PartialEq, Eq)]
-struct Equalizer {
-    preset: EqualizerPreset,
-    clear_bass: i8,
-    band_400: i8,
-    band_1000: i8,
-    band_2500: i8,
-    band_6300: i8,
-    band_16000: i8,
-}
-
-#[derive(Default)]
-struct HeadphoneState {
-    case_battery: Option<usize>,
-    left_ear_battery: Option<usize>,
-    right_ear_battery: Option<usize>,
-    equalizer: Option<Equalizer>,
-    anc_mode: Option<AncMode>,
-    ambient_slider: Option<usize>,
-    voice_passthrough: Option<bool>,
-    codec: Option<Codec>,
-    sound_pressure_db: Option<usize>,
-    sound_pressure_poll_task: AsyncResource<()>,
-}
+use crate::{async_resource::AsyncResource, headphone_ui::HeadphoneUi};
+#[cfg(not(target_arch = "wasm32"))]
+use bluer::Device;
+use eframe::egui;
+use tokio::sync::mpsc;
+#[cfg(target_arch = "wasm32")]
+use web_sys::SerialPort;
 
 #[derive(Default)]
 pub struct App {
-    bt_info: AsyncResource<bluer::Result<BtInfo>>,
-    bt_devices: Rc<RefCell<HashMap<String, Device>>>,
-    bt_devices_task: AsyncResource<bluer::Result<()>>,
-    connection_task: AsyncResource<bluer::Result<()>>,
-    request_send: Rc<RefCell<Option<mpsc::UnboundedSender<Command>>>>,
-    response_recv: Rc<RefCell<Option<mpsc::UnboundedReceiver<Payload>>>>,
-    stop_connection_task: Rc<RefCell<Option<mpsc::Sender<()>>>>,
-    adapter: Rc<RefCell<Option<Adapter>>>,
-    device: String,
-    device_addr: String,
-    pub last_device_addr: String,
-    pub connect_to_the_device_automatically_on_startup: bool,
-    found_last_device: bool,
-    tried_connecting_to_last_device: bool,
-    is_connected: bool,
-    headphone_state: HeadphoneState,
+    #[cfg(not(target_arch = "wasm32"))]
+    pub picker: DevicePicker,
+    #[cfg(not(target_arch = "wasm32"))]
+    current_connection: Option<Device>,
+    #[cfg(target_arch = "wasm32")]
+    current_connection: Option<SerialPort>,
+    #[cfg(target_arch = "wasm32")]
+    picker: AsyncResource<anyhow::Result<SerialPort>>,
+    connection_task: AsyncResource<anyhow::Result<()>>,
+    headphone_ui: Option<HeadphoneUi>,
 }
 
 impl App {
-    pub const LAST_ADDR_KEY: &'static str = "LAST_CONNECTED_DEVICE_ADDRESS";
-    pub fn new() -> Self {
-        App::default()
-    }
-
-    fn last_connected_addr(&self) -> Option<&String> {
-        if self.last_device_addr.is_empty() {
-            None
-        } else {
-            Some(&self.last_device_addr)
-        }
-    }
-
-    fn stop_discovery_task(&self) {
-        self.bt_devices_task.set_resource(Ok(()));
-    }
-
-    fn start_device_discovery_task(&self, ctx: &Context, ui: &mut Ui) {
-        match self.bt_devices_task.get() {
+    #[cfg(target_arch = "wasm32")]
+    fn pick_device_web(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        egui::CentralPanel::default().show(ctx, |ui| match self.picker.get() {
             ResourceStatus::Ready(result) => {
                 if let Err(e) = result.as_ref() {
-                    ui.label(format!("error while discovering devices: {e}"));
-                    if ui.button("retry?").clicked() {
-                        self.bt_devices_task.clear();
-                    }
+                    ui.label(format!("Error while requesting permissions: {e}"));
                 } else {
-                    ui.label("Search done.");
-                    if ui.button("Search again?").clicked() {
-                        self.bt_devices_task.clear();
-                    }
+                    self.current_connection = Some(result.as_ref().unwrap().clone());
                 }
             }
-
             ResourceStatus::Pending => {
-                ui.horizontal(|ui| {
-                    ui.label("Searching devices...");
-                    if ui.button("Stop searching?").clicked() {
-                        self.stop_discovery_task();
-                    }
-                });
+                ui.label("Pick the headphones from the popup");
                 ui.spinner();
             }
-
             ResourceStatus::NotInitialized => {
-                let adapter = self.adapter.borrow().clone().unwrap();
-                // clear the map if we have something in it
-                self.bt_devices.take();
-                let map = self.bt_devices.clone();
-                let ctx = ctx.clone();
-                let timeout = Duration::from_secs(30);
-                self.bt_devices_task.set(async move {
-                    let stream = adapter.discover_devices().await?;
-                    pin_mut!(stream);
-                    let result = tokio::time::timeout(timeout, async move {
-                        while let Some(event) = stream.next().await {
-                            match event {
-                                AdapterEvent::DeviceAdded(addr) => {
-                                    let device = adapter.device(addr)?;
-                                    if let Some(name) = device.name().await? {
-                                        map.borrow_mut().insert(name, device);
-                                        ctx.request_repaint();
-                                    }
-                                }
-
-                                AdapterEvent::DeviceRemoved(addr) => {
-                                    let device = adapter.device(addr)?;
-                                    if let Some(name) = device.name().await? {
-                                        map.borrow_mut().remove(&name);
-                                        ctx.request_repaint();
-                                    }
-                                }
-                                _ => (),
-                            }
-                        }
-                        Ok(())
-                    })
-                    .await;
-                    match result {
-                        Ok(res) => res,
-                        Err(_) => Ok(()),
-                    }
-                });
-            }
-        }
-    }
-
-    fn start_connection_thread(&self, ctx: &Context) {
-        let device = self.bt_devices.borrow().get(&self.device).unwrap().clone();
-        let (command_tx, command_rx) = mpsc::unbounded_channel();
-        let (payload_tx, payload_rx) = mpsc::unbounded_channel();
-        let (stop_tx, stop_rx) = mpsc::channel(1);
-        if let Some(old_stop_tx) = self.stop_connection_task.borrow().as_ref() {
-            let _ = old_stop_tx.try_send(());
-        }
-        *self.stop_connection_task.borrow_mut() = Some(stop_tx);
-        *self.request_send.borrow_mut() = Some(command_tx);
-        *self.response_recv.borrow_mut() = Some(payload_rx);
-        let ctx = ctx.clone();
-
-        self.connection_task.set(async move {
-            // we put it in another thread because the UI makes the entire thread sleep.
-            // (we could put a timeout in main to prevent it, but I think this option is cleaner)
-            tokio::task::spawn_blocking(move || {
-                headphone_thread::thread_main(device, payload_tx, command_rx, stop_rx, ctx)
-            })
-            .await
-            .unwrap()
-        });
-    }
-
-    fn handle_payload(&mut self, payload: Payload) {
-        match payload {
-            Payload::InitReply => {
-                self.is_connected = true;
-                self.stop_discovery_task();
-                let mut tx_borrow = self.request_send.borrow_mut();
-                let tx = tx_borrow.as_mut().unwrap();
-                // get all information
-                tx.send(Command::GetBatteryStatus {
-                    battery_type: BatteryType::Headphones,
-                })
-                .unwrap();
-                tx.send(Command::GetBatteryStatus {
-                    battery_type: BatteryType::Case,
-                })
-                .unwrap();
-                tx.send(Command::GetEqualizerSettings).unwrap();
-                tx.send(Command::GetAncStatus).unwrap();
-                tx.send(Command::GetCodec).unwrap();
-            }
-
-            Payload::BatteryLevel(battery) => match battery {
-                BatteryLevel::Case(battery) => {
-                    self.headphone_state.case_battery = Some(battery);
-                }
-
-                BatteryLevel::Headphones { left, right } => {
-                    self.headphone_state.left_ear_battery = Some(left);
-                    self.headphone_state.right_ear_battery = Some(right);
-                }
-            },
-
-            Payload::Equalizer {
-                preset,
-                clear_bass,
-                band_400,
-                band_1000,
-                band_2500,
-                band_6300,
-                band_16000,
-            } => {
-                self.headphone_state.equalizer = Some(Equalizer {
-                    preset,
-                    clear_bass,
-                    band_400,
-                    band_1000,
-                    band_2500,
-                    band_6300,
-                    band_16000,
-                });
-            }
-
-            Payload::AncStatus {
-                mode,
-                ambient_sound_voice_passthrough,
-                ambient_sound_level,
-            } => {
-                self.headphone_state.anc_mode = Some(mode);
-                self.headphone_state.ambient_slider = Some(ambient_sound_level as usize);
-                self.headphone_state.voice_passthrough = Some(ambient_sound_voice_passthrough);
-            }
-
-            Payload::Codec { codec } => {
-                self.headphone_state.codec = Some(codec);
-            }
-
-            Payload::SoundPressureMeasureReply { is_on } => {
-                if is_on {
-                    Self::send_command(&self.request_send, Command::GetSoundPressure);
-                    // we create the polling task in another thread since the GUI thread sleeps when there is no user interaction
-                    let request_send = self.request_send.borrow().as_ref().unwrap().clone();
-                    self.headphone_state
-                        .sound_pressure_poll_task
-                        .set(async move {
-                            let (stop_tx, mut stop_rx) = mpsc::channel(1);
-                            let _ = tokio::task::spawn_blocking(move || {
-                                tokio::runtime::Builder::new_current_thread()
-                                    .enable_time()
-                                    .build()
-                                    .unwrap()
-                                    .block_on(async move {
-                                        loop {
-                                            tokio::select! {
-                                                _ = stop_rx.recv() => {
-                                                    break;
-                                                }
-
-                                                _ = tokio::time::sleep(Duration::from_secs(1)) => {
-                                                    if request_send.send(Command::GetSoundPressure).is_err()
-                                                    {
-                                                        break;
-                                                    }
-                                                }
-                                            }
-                                        }
-                                        log::debug!("sound pressure task dead");
-                                    });
-                            })
-                            .await;
-                            let _ = stop_tx.send(());
-                        });
-                } else {
-                    self.headphone_state.sound_pressure_db = None;
-                    self.headphone_state.sound_pressure_poll_task.cancel();
-                }
-            }
-
-            Payload::SoundPressure { db } => {
-                self.headphone_state.sound_pressure_db = Some(db);
-            }
-        }
-    }
-
-    // it's written this way to allow functions which do not you the entire self to send a command
-    fn send_command(tx: &Rc<RefCell<Option<mpsc::UnboundedSender<Command>>>>, command: Command) {
-        if let Some(tx) = tx.borrow().as_ref() {
-            tx.send(command).unwrap();
-        }
-    }
-
-    // written in this way to avoid needing to borrow &mut self
-    fn draw_headphones_info(
-        state: &mut HeadphoneState,
-        ui: &mut Ui,
-        request_send: &mut Rc<RefCell<Option<mpsc::UnboundedSender<Command>>>>,
-    ) {
-        let size = 25.0;
-        if let Some(left_battery) = state.left_ear_battery
-            && let Some(right_battery) = state.right_ear_battery
-            && let Some(case_battery) = state.case_battery
-        {
-            ui.label(
-                RichText::from(format!(
-                    "🇱 battery: {}, 🇷 battery: {}, case battery: {}",
-                    left_battery, right_battery, case_battery
-                ))
-                .size(size)
-                .strong(),
-            );
-        }
-        ui.separator();
-        if let Some(codec) = state.codec {
-            ui.label(
-                RichText::new(format!("Codec: {}", codec.as_str()))
-                    .size(size)
-                    .strong(),
-            );
-        }
-        ui.separator();
-        if let Some(sound_pressure) = state.sound_pressure_db {
-            ui.label(
-                RichText::new(format!("sound pressure: {sound_pressure} dB"))
-                    .strong()
-                    .size(size),
-            );
-            if ui.button("stop?").clicked() {
-                Self::send_command(request_send, Command::SoundPressureMeasure { on: false });
-            }
-        } else {
-            if ui.button("Start sound pressure measure?").clicked() {
-                Self::send_command(request_send, Command::SoundPressureMeasure { on: true });
-            }
-        }
-        ui.separator();
-        if let Some(equalizer) = state.equalizer.as_mut() {
-            ui.label(RichText::new("Equalizer").strong().size(size));
-
-            ui.menu_button(equalizer.preset.to_string(), |ui| {
-                let responses = [
-                    ui.selectable_value(&mut equalizer.preset, EqualizerPreset::Off, "Off"),
-                    ui.selectable_value(&mut equalizer.preset, EqualizerPreset::Bright, "Bright"),
-                    ui.selectable_value(&mut equalizer.preset, EqualizerPreset::Excited, "Excited"),
-                    ui.selectable_value(&mut equalizer.preset, EqualizerPreset::Mellow, "Mellow"),
-                    ui.selectable_value(&mut equalizer.preset, EqualizerPreset::Relaxed, "Relaxed"),
-                    ui.selectable_value(&mut equalizer.preset, EqualizerPreset::Vocal, "Vocal"),
-                    ui.selectable_value(
-                        &mut equalizer.preset,
-                        EqualizerPreset::TrebleBoost,
-                        "Treble Boost",
-                    ),
-                    ui.selectable_value(
-                        &mut equalizer.preset,
-                        EqualizerPreset::BassBoost,
-                        "Bass Boost",
-                    ),
-                    ui.selectable_value(&mut equalizer.preset, EqualizerPreset::Speech, "Speech"),
-                    ui.selectable_value(&mut equalizer.preset, EqualizerPreset::Manual, "Manual"),
-                    ui.selectable_value(&mut equalizer.preset, EqualizerPreset::Custom1, "Custom1"),
-                    ui.selectable_value(&mut equalizer.preset, EqualizerPreset::Custom2, "Custom2"),
-                ];
-                if responses.iter().any(|r| r.clicked()) {
-                    Self::send_command(
-                        request_send,
-                        Command::ChangeEqualizerPreset {
-                            preset: equalizer.preset,
-                        },
-                    );
-                }
-            });
-
-            ui.horizontal(|ui| {
-                let responses = vec![
-                    ui.add(
-                        Slider::new(&mut equalizer.clear_bass, -10..=10)
-                            .vertical()
-                            .text(RichText::new("clear bass").strong()),
-                    ),
-                    ui.add(
-                        Slider::new(&mut equalizer.band_400, -10..=10)
-                            .vertical()
-                            .text(RichText::new("400 Hz").strong()),
-                    ),
-                    ui.add(
-                        Slider::new(&mut equalizer.band_1000, -10..=10)
-                            .vertical()
-                            .text(RichText::new("1000 Hz").strong()),
-                    ),
-                    ui.add(
-                        Slider::new(&mut equalizer.band_2500, -10..=10)
-                            .vertical()
-                            .text(RichText::new("2500 Hz").strong()),
-                    ),
-                    ui.add(
-                        Slider::new(&mut equalizer.band_6300, -10..=10)
-                            .vertical()
-                            .text(RichText::new("6300 Hz").strong()),
-                    ),
-                    ui.add(
-                        Slider::new(&mut equalizer.band_16000, -10..=10)
-                            .vertical()
-                            .text(RichText::new("16000 Hz").strong()),
-                    ),
-                ];
-                if responses.iter().any(|r| r.changed()) {
-                    let preset = if matches!(
-                        equalizer.preset,
-                        EqualizerPreset::Manual
-                            | EqualizerPreset::Custom1
-                            | EqualizerPreset::Custom2
-                    ) {
-                        equalizer.preset
-                    } else {
-                        // we shouldn't (can't?) change non-custom/manual presets
-                        EqualizerPreset::Manual
+                if ui.button("Allow connection to WF-1000XM5").clicked() {
+                    use eframe::wasm_bindgen::JsValue;
+                    use wasm_bindgen_futures::JsFuture;
+                    use web_sys::{
+                        SerialPortRequestOptions,
+                        js_sys::{Array, Reflect},
                     };
-                    Self::send_command(
-                        request_send,
-                        Command::ChangeEqualizerSetting {
-                            preset,
-                            bass_level: equalizer.clear_bass,
-                            band_400: equalizer.band_400,
-                            band_1000: equalizer.band_1000,
-                            band_2500: equalizer.band_2500,
-                            band_6300: equalizer.band_6300,
-                            band_16000: equalizer.band_16000,
-                        },
-                    );
-                }
-            });
-        }
-        ui.separator();
-        if let Some(anc_mode) = state.anc_mode.as_mut()
-            && let Some(ambient_slider) = state.ambient_slider.as_mut()
-            && let Some(voice_passthrough) = state.voice_passthrough.as_mut()
-        {
-            ui.label(RichText::new("ANC configuration:").strong().size(size));
-            if ui
-                .radio_value(anc_mode, AncMode::Off, RichText::new("Off").strong())
-                .clicked()
-            {
-                Self::send_command(
-                    request_send,
-                    Command::AncSet {
-                        dragging_ambient_sound_slider: false,
-                        mode: AncMode::Off,
-                        ambient_sound_voice_passthrough: false,
-                        ambient_sound_level: 0,
-                    },
-                );
-            }
-            if ui
-                .radio_value(
-                    anc_mode,
-                    AncMode::AmbientSound,
-                    RichText::new("Ambient Sounds").strong(),
-                )
-                .clicked()
-            {
-                Self::send_command(
-                    request_send,
-                    Command::AncSet {
-                        dragging_ambient_sound_slider: false,
-                        mode: AncMode::AmbientSound,
-                        ambient_sound_voice_passthrough: true,
-                        ambient_sound_level: *ambient_slider,
-                    },
-                );
-            }
-            if *anc_mode == AncMode::AmbientSound {
-                ui.horizontal(|ui| {
-                    let mut should_update = false;
-                    should_update |= ui.add(Slider::new(ambient_slider, 0..=20)).drag_stopped();
-                    should_update |= ui
-                        .checkbox(voice_passthrough, "voice passthrough")
-                        .clicked();
 
-                    if should_update {
-                        Self::send_command(
-                            request_send,
-                            Command::AncSet {
-                                dragging_ambient_sound_slider: false,
-                                mode: AncMode::AmbientSound,
-                                ambient_sound_voice_passthrough: *voice_passthrough,
-                                ambient_sound_level: *ambient_slider,
-                            },
-                        );
-                    }
-                });
+                    let navigator = web_sys::window().expect("no window?").navigator();
+                    let serial = navigator.serial();
+                    let options = SerialPortRequestOptions::new();
+                    let filters = web_sys::js_sys::JSON::parse(
+                        r#"
+                        [
+                        {
+                            "bluetoothServiceClassId":  ["956c7b26-d49a-4ba8-b03f-b17d393cb6e2"] 
+                        }
+                        ]
+                    "#,
+                    )
+                    .unwrap();
+                    options.set_filters(&filters);
+                    let uuid_array = Array::new();
+                    uuid_array.push(&JsValue::from_str("956c7b26-d49a-4ba8-b03f-b17d393cb6e2"));
+                    Reflect::set(
+                        &options,
+                        &JsValue::from_str("allowedBluetoothServiceClassIds"),
+                        &uuid_array,
+                    )
+                    .unwrap();
+                    let future = JsFuture::from(serial.request_port_with_options(&options));
+                    self.picker.set(async move {
+                        use eframe::wasm_bindgen::JsCast;
+                        use web_sys::SerialPort;
+
+                        let port: SerialPort = future.await.unwrap().dyn_into().unwrap();
+                        log::error!("got serial port");
+                        Ok(port)
+                    });
+                }
             }
-            if ui
-                .radio_value(
-                    anc_mode,
-                    AncMode::ActiveNoiseCanceling,
-                    RichText::new("Active Noise Canceling").strong(),
-                )
-                .clicked()
-            {
-                Self::send_command(
-                    request_send,
-                    Command::AncSet {
-                        dragging_ambient_sound_slider: false,
-                        mode: AncMode::ActiveNoiseCanceling,
-                        ambient_sound_voice_passthrough: true,
-                        ambient_sound_level: *ambient_slider,
-                    },
-                );
-            }
-        }
+        });
     }
 }
-
 impl eframe::App for App {
-    fn update(&mut self, ctx: &eframe::egui::Context, _frame: &mut eframe::Frame) {
-        let rx_clone = self.response_recv.clone();
-        if let Some(rx) = rx_clone.borrow_mut().as_mut() {
-            while let Ok(payload) = rx.try_recv() {
-                self.handle_payload(payload);
+    fn update(&mut self, ctx: &egui::Context, frame: &mut eframe::Frame) {
+        if self.current_connection.is_none() {
+            #[cfg(target_os = "linux")]
+            {
+                self.picker.update(ctx, frame);
+                self.current_connection = self.picker.wants_connection();
             }
-        }
-
-        egui::CentralPanel::default().show(ctx, |ui| {
-            ScrollArea::vertical().show(ui, |ui| {
-                match self.bt_info.get() {
-                    ResourceStatus::Ready(bt_info_result) => match bt_info_result.as_ref() {
-                        Ok(bt_info) => {
-                            ui.label(format!("Bluetooth enabled: {}", bt_info.is_powered));
-                            if ui.button("refresh").clicked() {
-                                self.bt_info.clear();
-                            }
-                            if !bt_info.is_powered {
-                                ui.label("Bluetooth is not on. Turn it on and press refresh.");
-                            } else {
-                                self.start_device_discovery_task(ctx, ui);
-                                for (device, dev) in self.bt_devices.borrow().iter() {
-                                    ui.radio_value(&mut self.device, device.clone(), device);
-                                    if self.device == *device {
-                                        self.device_addr = dev.address().to_string();
-                                    }
-                                    if self.device.is_empty()
-                                        && let Some(addr) = self.last_connected_addr()
-                                        && dev.address().to_string() == *addr
-                                        && !self.found_last_device
-                                    {
-                                        self.device = device.clone();
-                                        self.found_last_device = true;
-                                    }
-                                }
-
-                                if !self.device.is_empty() {
-                                    #[allow(clippy::collapsible_if)]
-                                    if ui.button("connect?").clicked()
-                                        || (self.found_last_device
-                                            && !self.tried_connecting_to_last_device)
-                                    {
-                                        // even if we didn't find the last device, if you try to connect to something before we found the device,
-                                        // we won't connect.
-                                        self.tried_connecting_to_last_device = true;
-                                        self.is_connected = false;
-                                        self.headphone_state = HeadphoneState::default();
-                                        self.start_connection_thread(ctx);
-                                    }
-
-                                    ui.checkbox(
-                                        &mut self.connect_to_the_device_automatically_on_startup,
-                                        "Connect to this device automatically next time",
-                                    );
-                                }
-
-                                if self.is_connected {
-                                    ui.label("Connected!");
-                                    Self::draw_headphones_info(
-                                        &mut self.headphone_state,
-                                        ui,
-                                        &mut self.request_send,
-                                    );
-                                } else {
-                                    match self.connection_task.get() {
-                                        ResourceStatus::Ready(result) => {
-                                            if let Err(e) = result.as_ref() {
-                                                ui.label(format!("Error while connecting: {e}"));
-                                            } else {
-                                                ui.label("Connection task was interrupted.");
-                                            }
-                                            if ui.button("retry?").clicked() {
-                                                self.connection_task.clear();
-                                                self.start_connection_thread(ctx);
-                                            }
-                                        }
-                                        ResourceStatus::Pending => {
-                                            ui.label("Trying to connect...");
-                                            ui.spinner();
-                                        }
-                                        ResourceStatus::NotInitialized => {
-                                            ui.label("Not connected");
-                                        }
-                                    }
-                                }
-                            }
+            #[cfg(target_arch = "wasm32")]
+            {
+                self.pick_device_web(ctx, frame);
+            }
+        } else {
+            let mut should_reset_connection = false;
+            match self.connection_task.get() {
+                ResourceStatus::Ready(result) => {
+                    egui::CentralPanel::default().show(ctx, |ui| {
+                        if let Err(e) = result.as_ref() {
+                            ui.label(format!("Got an error: {e}"));
+                        } else {
+                            // if it dies with Ok(()) it means the user disconnected by themselves
+                            should_reset_connection = true;
                         }
-                        Err(e) => {
-                            ui.label(format!("BtInfo: error: {e}"));
-                            if ui.button("retry?").clicked() {
-                                self.bt_info.clear();
-                            }
+                        if ui.button("retry?").clicked() {
+                            self.connection_task.clear();
                         }
-                    },
+                        if ui.button("go back to device picker").clicked() {
+                            should_reset_connection = true;
+                        }
+                    });
+                }
 
-                    ResourceStatus::Pending => {
-                        ui.label("Getting BtInfo");
-                        ui.spinner();
-                    }
-
-                    ResourceStatus::NotInitialized => {
-                        let ui_adapter = self.adapter.clone();
-                        self.bt_info.set(async move {
-                            if ui_adapter.borrow().is_none() {
-                                let session = Session::new().await?;
-                                let adapter = session.default_adapter().await?;
-                                {
-                                    *ui_adapter.borrow_mut() = Some(adapter.clone());
-                                }
+                ResourceStatus::Pending => {
+                    let headphone_ui = self.headphone_ui.as_mut().unwrap();
+                    if headphone_ui.is_connected() {
+                        headphone_ui.update(ctx, frame);
+                    } else {
+                        headphone_ui.poll_events();
+                        egui::CentralPanel::default().show(ctx, |ui| {
+                            ui.label("Connecting...");
+                            if ui.button("stop?").clicked() {
+                                should_reset_connection = true;
                             }
-                            // cloned to not hold it over an await point
-                            // i don't think it actually matters in this case, but might as well to remove the clippy warning
-                            let adapter = { ui_adapter.borrow().as_ref().unwrap().clone() };
-
-                            Ok(BtInfo {
-                                is_powered: adapter.is_powered().await?,
-                            })
+                            ui.spinner();
                         });
                     }
                 }
-            });
-        });
-    }
+                ResourceStatus::NotInitialized => {
+                    let (command_tx, command_rx) = mpsc::unbounded_channel();
+                    let (payload_tx, payload_rx) = mpsc::unbounded_channel();
+                    let (stop_tx, stop_rx) = mpsc::channel(1);
+                    #[cfg(not(target_arch = "wasm32"))]
+                    let device = self.current_connection.as_ref().unwrap().clone();
+                    #[cfg(target_arch = "wasm32")]
+                    let port = self.current_connection.as_ref().unwrap().clone();
+                    let ctx = ctx.clone();
+                    #[cfg(not(target_arch = "wasm32"))]
+                    self.connection_task.set(async move {
+                        tokio::task::spawn_blocking(move || {
+                            headphone_thread::thread_main(
+                                device, payload_tx, command_rx, stop_rx, ctx,
+                            )
+                        })
+                        .await?
+                    });
+                    #[cfg(target_arch = "wasm32")]
+                    self.connection_task.set(async move {
+                        headphone_thread::thread_main(port, payload_tx, command_rx, stop_rx, ctx)
+                            .await
+                    });
+                    self.headphone_ui = Some(HeadphoneUi::new(command_tx, payload_rx, stop_tx));
+                }
+            }
+            if should_reset_connection {
+                self.connection_task.clear();
+                self.current_connection = None;
 
+                #[cfg(target_arch = "wasm32")]
+                self.picker.clear();
+            }
+        }
+    }
+    #[cfg(not(target_arch = "wasm32"))]
     fn on_exit(&mut self, _gl: Option<&eframe::glow::Context>) {
         // cancel the connection task and all communication to it, since it blocks up the UI on exit
-
         self.connection_task.cancel();
     }
 
+    #[cfg(not(target_arch = "wasm32"))]
     fn save(&mut self, storage: &mut dyn eframe::Storage) {
-        let device = if self.connect_to_the_device_automatically_on_startup {
-            self.device_addr.clone()
-        } else {
-            String::new()
-        };
-        storage.set_string(Self::LAST_ADDR_KEY, device);
+        self.picker.save(storage);
     }
 }

@@ -3,13 +3,19 @@ use std::{
     rc::Rc,
 };
 
+#[cfg(target_arch = "wasm32")]
+use futures::future::{AbortHandle, Abortable};
+#[cfg(not(target_arch = "wasm32"))]
 use tokio::task::JoinHandle;
 
 /// A resource which can be acquired asynchornously (single threaded)
 pub struct AsyncResource<T> {
     res: Rc<RefCell<Option<T>>>,
     need_clear: Rc<Cell<bool>>,
+    #[cfg(not(target_arch = "wasm32"))]
     handle: Rc<RefCell<Option<JoinHandle<()>>>>,
+    #[cfg(target_arch = "wasm32")]
+    handle: Rc<RefCell<Option<AbortHandle>>>,
 }
 pub enum ResourceStatus<T> {
     /// The resource is ready, you can use it
@@ -34,14 +40,29 @@ impl<T: 'static> AsyncResource<T> {
         let need_clear = self.need_clear.clone();
         let res = self.res.clone();
         let handle = self.handle.clone();
-        let handle = tokio::task::spawn_local(async move {
+        let future = async move {
             let t = f.await;
             *res.borrow_mut() = Some(t);
             *handle.borrow_mut() = None;
             // if we needed to clear before, we no longer need to
             need_clear.set(false);
-        });
-        *self.handle.borrow_mut() = Some(handle);
+        };
+        let new_handle = {
+            #[cfg(target_arch = "wasm32")]
+            {
+                let (new_handle, abort_reg) = AbortHandle::new_pair();
+                let abortable = Abortable::new(future, abort_reg);
+                wasm_bindgen_futures::spawn_local(async move {
+                    let _ = abortable.await;
+                });
+                new_handle
+            }
+            #[cfg(not(target_arch = "wasm32"))]
+            {
+                tokio::task::spawn_local(future)
+            }
+        };
+        *self.handle.borrow_mut() = Some(new_handle);
     }
 
     /// Cancel a pending task.
