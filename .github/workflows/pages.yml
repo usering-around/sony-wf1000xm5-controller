@@ -3,7 +3,7 @@ name: Github Pages
 on:
   push:
     branches:
-      - main
+      - wasm-support
       
 permissions:
   contents: write # for committing to gh-pages branch.
