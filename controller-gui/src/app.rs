@@ -51,7 +51,7 @@ impl App {
                     let navigator = web_sys::window().expect("no window?").navigator();
 
                     let serial = navigator.serial();
-                    log::error!("serial: {:?}, {:?}", serial, serial.js_typeof());
+
                     if serial.is_undefined() {
                         self.picker.set_resource(Err(anyhow::anyhow!(
                             "Web Serial API is not implemented for this browser."
