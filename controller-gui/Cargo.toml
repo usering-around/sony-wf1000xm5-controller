@@ -1,6 +1,6 @@
 [package]
 name = "controller-gui"
-version = "0.1.1"
+version = "0.1.2"
 edition = "2024"
 repository = "https://github.com/usering-around/sony-wf1000xm5-controller"
 
