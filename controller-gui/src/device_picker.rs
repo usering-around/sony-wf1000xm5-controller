@@ -141,9 +141,6 @@ impl eframe::App for DevicePicker {
                                 self.start_device_discovery_task(ctx, ui);
                                 for (device, dev) in self.bt_devices.borrow().iter() {
                                     ui.radio_value(&mut self.device, device.clone(), device);
-                                    if self.device == *device {
-                                        self.device_addr = dev.address().to_string();
-                                    }
                                     if self.device.is_empty()
                                         && let Some(addr) = self.last_connected_addr()
                                         && dev.address().to_string() == *addr
@@ -151,6 +148,9 @@ impl eframe::App for DevicePicker {
                                     {
                                         self.device = device.clone();
                                         self.found_last_device = true;
+                                    }
+                                    if self.device == *device {
+                                        self.device_addr = dev.address().to_string();
                                     }
                                 }
 
