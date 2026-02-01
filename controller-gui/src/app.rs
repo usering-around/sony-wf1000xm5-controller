@@ -103,6 +103,9 @@ impl eframe::App for App {
             {
                 self.picker.update(ctx, frame);
                 self.current_connection = self.picker.wants_connection();
+                if self.current_connection.is_some() {
+                    self.picker.stop_discovery_task();
+                }
             }
             #[cfg(target_arch = "wasm32")]
             {
