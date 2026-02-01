@@ -1,6 +1,6 @@
 use crate::async_resource::AsyncResource;
 use crate::async_resource::ResourceStatus;
-use bluer::{Adapter, AdapterEvent, Device, Session};
+use bluer::{AdapterEvent, Device, Session};
 use eframe::egui::{self, Context, ScrollArea, Ui};
 use futures::StreamExt;
 use futures::pin_mut;
@@ -8,6 +8,7 @@ use std::cell::RefCell;
 use std::collections::HashMap;
 use std::rc::Rc;
 use std::time::Duration;
+use tokio::sync::mpsc;
 
 // Might get more info in the future
 struct BtInfo {
@@ -16,10 +17,11 @@ struct BtInfo {
 
 #[derive(Default)]
 pub struct DevicePicker {
+    // should probably abolish async resource and all the Rc<RefCell>> at some point, makes everything ugly and unnecessarily complicated
     bt_info: AsyncResource<bluer::Result<BtInfo>>,
     bt_devices: Rc<RefCell<HashMap<String, Device>>>,
+    bt_device_recv: Rc<RefCell<Option<mpsc::UnboundedReceiver<(String, Device)>>>>,
     bt_devices_task: AsyncResource<anyhow::Result<()>>,
-    adapter: Rc<RefCell<Option<Adapter>>>,
     device: String,
     device_addr: String,
     pub last_device_addr: String,
@@ -44,7 +46,7 @@ impl DevicePicker {
         }
     }
 
-    fn stop_discovery_task(&self) {
+    pub fn stop_discovery_task(&self) {
         self.bt_devices_task.set_resource(Ok(()));
     }
 
@@ -65,6 +67,12 @@ impl DevicePicker {
             }
 
             ResourceStatus::Pending => {
+                if let Some(device_rx) = self.bt_device_recv.borrow_mut().as_mut() {
+                    // technically there's a race condition with this method, but realistically who cares
+                    while let Ok((name, device)) = device_rx.try_recv() {
+                        self.bt_devices.borrow_mut().insert(name, device);
+                    }
+                }
                 ui.horizontal(|ui| {
                     ui.label("Searching devices...");
                     if ui.button("Stop searching?").clicked() {
@@ -76,13 +84,15 @@ impl DevicePicker {
 
             ResourceStatus::NotInitialized => {
                 {
-                    let adapter = self.adapter.borrow().clone().unwrap();
                     // clear the map if we have something in it
-                    self.bt_devices.take();
-                    let map = self.bt_devices.clone();
+                    self.bt_devices.borrow_mut().clear();
+                    let (device_tx, device_rx) = mpsc::unbounded_channel();
+                    *self.bt_device_recv.borrow_mut() = Some(device_rx);
                     let ctx = ctx.clone();
                     let timeout = Duration::from_secs(30);
                     self.bt_devices_task.set(async move {
+                        let session = Session::new().await?;
+                        let adapter = session.default_adapter().await?;
                         let stream = adapter.discover_devices().await?;
                         pin_mut!(stream);
                         let result = tokio::time::timeout(timeout, async move {
@@ -91,18 +101,11 @@ impl DevicePicker {
                                     AdapterEvent::DeviceAdded(addr) => {
                                         let device = adapter.device(addr)?;
                                         if let Some(name) = device.name().await? {
-                                            map.borrow_mut().insert(name, device);
+                                            device_tx.send((name, device))?;
                                             ctx.request_repaint();
                                         }
                                     }
 
-                                    AdapterEvent::DeviceRemoved(addr) => {
-                                        let device = adapter.device(addr)?;
-                                        if let Some(name) = device.name().await? {
-                                            map.borrow_mut().remove(&name);
-                                            ctx.request_repaint();
-                                        }
-                                    }
                                     _ => (),
                                 }
                             }
@@ -194,18 +197,9 @@ impl eframe::App for DevicePicker {
                     }
 
                     ResourceStatus::NotInitialized => {
-                        let ui_adapter = self.adapter.clone();
                         self.bt_info.set(async move {
-                            if ui_adapter.borrow().is_none() {
-                                let session = Session::new().await?;
-                                let adapter = session.default_adapter().await?;
-                                {
-                                    *ui_adapter.borrow_mut() = Some(adapter.clone());
-                                }
-                            }
-                            // cloned to not hold it over an await point
-                            // i don't think it actually matters in this case, but might as well to remove the clippy warning
-                            let adapter = { ui_adapter.borrow().as_ref().unwrap().clone() };
+                            let session = Session::new().await?;
+                            let adapter = session.default_adapter().await?;
 
                             Ok(BtInfo {
                                 is_powered: adapter.is_powered().await?,

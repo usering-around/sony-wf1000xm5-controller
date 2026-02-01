@@ -130,39 +130,18 @@ impl HeadphoneUi {
                 if is_on {
                     self.request_send.send(Command::GetSoundPressure).unwrap();
                     let request_send = self.request_send.clone();
-                    // we create the polling task in another thread since the GUI thread sleeps when there is no user interaction
                     #[cfg(not(target_arch = "wasm32"))]
                     self.headphone_state
                         .sound_pressure_poll_task
                         .set(async move {
-                            let (stop_tx, mut stop_rx) = mpsc::channel(1);
-                            let _ = tokio::task::spawn_blocking(move || {
-                                tokio::runtime::Builder::new_current_thread()
-                                    .enable_time()
-                                    .build()
-                                    .unwrap()
-                                    .block_on(async move {
-                                        loop {
-                                            use std::time::Duration;
-
-                                            tokio::select! {
-                                                _ = stop_rx.recv() => {
-                                                    break;
-                                                }
-
-                                                _ = tokio::time::sleep(Duration::from_secs(1)) => {
-                                                    if request_send.send(Command::GetSoundPressure).is_err()
-                                                    {
-                                                        break;
-                                                    }
-                                                }
-                                            }
-                                        }
-                                        log::debug!("sound pressure task dead");
-                                    });
-                            })
-                            .await;
-                            let _ = stop_tx.send(()).await;
+                            use std::time::Duration;
+                            loop {
+                                tokio::time::sleep(Duration::from_secs(1)).await;
+                                if request_send.send(Command::GetSoundPressure).is_err() {
+                                    break;
+                                }
+                            }
+                            log::debug!("sound pressure task dead");
                         });
 
                     #[cfg(target_arch = "wasm32")]

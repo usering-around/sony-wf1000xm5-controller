@@ -2,26 +2,23 @@ use controller_gui::app::App;
 #[cfg(not(target_arch = "wasm32"))]
 use controller_gui::device_picker::DevicePicker;
 #[cfg(not(target_arch = "wasm32"))]
-use eframe::{EframePumpStatus, UserEvent, egui};
-#[cfg(not(target_arch = "wasm32"))]
-use std::{io, os::fd::AsRawFd};
-#[cfg(not(target_arch = "wasm32"))]
-use tokio::task::LocalSet;
-#[cfg(not(target_arch = "wasm32"))]
-use winit::event_loop::{ControlFlow, EventLoop};
+use eframe::egui;
 
 #[cfg(not(target_arch = "wasm32"))]
-pub fn main() -> io::Result<()> {
+pub fn main() -> eframe::Result<()> {
     env_logger::init();
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default().with_inner_size([320.0, 240.0]),
         ..Default::default()
     };
+    let rt = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap();
+    let _handle = rt.enter();
+    std::thread::spawn(move || rt.block_on(std::future::pending::<()>()));
 
-    let mut eventloop = EventLoop::<UserEvent>::with_user_event().build().unwrap();
-    eventloop.set_control_flow(ControlFlow::Poll);
-
-    let mut winit_app = eframe::create_native(
+    eframe::run_native(
         "Sony-WF1000XM5 GUI",
         options,
         Box::new(|cc| {
@@ -36,45 +33,7 @@ pub fn main() -> io::Result<()> {
             }
             Ok(Box::new(app))
         }),
-        &eventloop,
-    );
-
-    let rt = tokio::runtime::Builder::new_current_thread()
-        .enable_all()
-        .build()
-        .unwrap();
-
-    let local = LocalSet::new();
-    local.block_on(&rt, async {
-        let eventloop_fd = tokio::io::unix::AsyncFd::new(eventloop.as_raw_fd())?;
-        let mut control_flow = ControlFlow::Poll;
-
-        loop {
-            let mut guard = match control_flow {
-                ControlFlow::Poll => None,
-                ControlFlow::Wait => Some(eventloop_fd.readable().await?),
-                ControlFlow::WaitUntil(deadline) => {
-                    tokio::time::timeout_at(deadline.into(), eventloop_fd.readable())
-                        .await
-                        .ok()
-                        .transpose()?
-                }
-            };
-
-            match winit_app.pump_eframe_app(&mut eventloop, None) {
-                EframePumpStatus::Continue(next) => control_flow = next,
-                EframePumpStatus::Exit(_code) => {
-                    break;
-                }
-            }
-
-            if let Some(mut guard) = guard.take() {
-                guard.clear_ready();
-            }
-        }
-
-        Ok::<_, io::Error>(())
-    })
+    )
 }
 
 #[cfg(target_arch = "wasm32")]
