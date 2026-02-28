@@ -348,7 +348,7 @@ impl HeadphoneUi {
             if *anc_mode == AncMode::AmbientSound {
                 ui.horizontal(|ui| {
                     let mut should_update = false;
-                    should_update |= ui.add(Slider::new(ambient_slider, 0..=20)).drag_stopped();
+                    should_update |= ui.add(Slider::new(ambient_slider, 0..=20)).changed();
                     should_update |= ui
                         .checkbox(voice_passthrough, "voice passthrough")
                         .clicked();
