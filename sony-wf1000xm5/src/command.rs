@@ -16,6 +16,25 @@ pub enum EqualizerPreset {
     Custom2 = 0xa2,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ChangeablePreset {
+    Manual = 0xa0,
+    Custom1 = 0xa1,
+    Custom2 = 0xa2,
+}
+
+impl TryFrom<EqualizerPreset> for ChangeablePreset {
+    type Error = ();
+    fn try_from(value: EqualizerPreset) -> Result<Self, Self::Error> {
+        Ok(match value {
+            EqualizerPreset::Manual => Self::Manual,
+            EqualizerPreset::Custom1 => Self::Custom1,
+            EqualizerPreset::Custom2 => Self::Custom2,
+            _ => return Err(()),
+        })
+    }
+}
+
 impl EqualizerPreset {
     pub fn from_byte(byte: u8) -> Option<Self> {
         Some(match byte {
@@ -73,7 +92,7 @@ pub enum Command {
         dragging_ambient_sound_slider: bool,
         mode: AncMode,
         ambient_sound_voice_passthrough: bool,
-        ambient_sound_level: usize,
+        ambient_sound_level: AmbientLevel,
     },
     GetAncStatus,
 
@@ -82,13 +101,13 @@ pub enum Command {
     },
     ChangeEqualizerSetting {
         // the preset to change the equalizer settings for
-        preset: EqualizerPreset,
-        bass_level: i8,
-        band_400: i8,
-        band_1000: i8,
-        band_2500: i8,
-        band_6300: i8,
-        band_16000: i8,
+        preset: ChangeablePreset,
+        bass_level: EqBand,
+        band_400: EqBand,
+        band_1000: EqBand,
+        band_2500: EqBand,
+        band_6300: EqBand,
+        band_16000: EqBand,
     },
     GetBatteryStatus {
         battery_type: BatteryType,
@@ -99,6 +118,50 @@ pub enum Command {
         on: bool,
     },
     GetSoundPressure,
+}
+/// A newtype around u8, constrained to 0 up to 20.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct AmbientLevel {
+    value: u8,
+}
+#[derive(Debug, thiserror::Error)]
+pub enum AmbientLevelError {
+    #[error("AmbientLevel must be in range of 0...20, got {}", .0)]
+    OutOfRange(u8),
+}
+impl AmbientLevel {
+    /// Fails if the value is greater than 20
+    pub fn new(value: u8) -> Result<Self, AmbientLevelError> {
+        if value <= 20 {
+            Ok(Self { value })
+        } else {
+            Err(AmbientLevelError::OutOfRange(value))
+        }
+    }
+}
+
+/// A newtype around i8, constrained to -10 up to 10.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct EqBand {
+    value: i8,
+}
+#[derive(Debug, thiserror::Error)]
+pub enum EqBandError {
+    #[error("EqBand must be in range of -10...10, got {}", .0)]
+    OutOfRange(i8),
+}
+impl EqBand {
+    /// Fails if the value is not in the range of -10...10 (inclusive)
+    pub fn new(value: i8) -> Result<Self, EqBandError> {
+        if value.abs() <= 10 {
+            Ok(Self { value })
+        } else {
+            Err(EqBandError::OutOfRange(value))
+        }
+    }
+    pub fn encode(&self) -> u8 {
+        (self.value + 10) as u8
+    }
 }
 
 impl Command {
@@ -125,9 +188,6 @@ impl Command {
                 ambient_sound_voice_passthrough,
                 ambient_sound_level,
             } => {
-                if *ambient_sound_level > 20 {
-                    panic!("ambient sound level should be less than or equal to 20");
-                }
                 let mut out = vec![
                     Self::ANC_SET,
                     Self::SUPPORTS_AMBIENT_SOUND_CONTROL_2,
@@ -150,7 +210,7 @@ impl Command {
                 } else {
                     0
                 });
-                out.push(*ambient_sound_level as u8);
+                out.push(ambient_sound_level.value);
                 out
             }
 
@@ -170,29 +230,18 @@ impl Command {
                 band_6300,
                 band_16000,
             } => {
-                assert!(bass_level.abs() <= 10);
-                assert!(band_400.abs() <= 10);
-                assert!(band_1000.abs() <= 10);
-                assert!(band_2500.abs() <= 10);
-                assert!(band_6300.abs() <= 10);
-                assert!(band_16000.abs() <= 10);
-                assert!(matches!(
-                    preset,
-                    EqualizerPreset::Manual | EqualizerPreset::Custom1 | EqualizerPreset::Custom2
-                ));
-
                 let data_size = 6; // bass level + 5 bands
                 vec![
                     Self::EQUALIZER_SET,
                     0,
                     *preset as u8,
                     data_size,
-                    (bass_level + 10) as u8,
-                    (band_400 + 10) as u8,
-                    (band_1000 + 10) as u8,
-                    (band_2500 + 10) as u8,
-                    (band_6300 + 10) as u8,
-                    (band_16000 + 10) as u8,
+                    bass_level.encode(),
+                    band_400.encode(),
+                    band_1000.encode(),
+                    band_2500.encode(),
+                    band_6300.encode(),
+                    band_16000.encode(),
                 ]
             }
 

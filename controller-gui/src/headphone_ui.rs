@@ -3,7 +3,9 @@ use eframe::egui::{self, RichText, Slider, Ui};
 #[cfg(target_arch = "wasm32")]
 use futures::StreamExt;
 use sony_wf1000xm5::{
-    command::{AncMode, BatteryType, Command, EqualizerPreset},
+    command::{
+        AmbientLevel, AncMode, BatteryType, ChangeablePreset, Command, EqBand, EqualizerPreset,
+    },
     payload::{BatteryLevel, Codec, Payload},
 };
 use tokio::sync::mpsc;
@@ -295,13 +297,13 @@ impl HeadphoneUi {
                     };
                     self.request_send
                         .send(Command::ChangeEqualizerSetting {
-                            preset,
-                            bass_level: equalizer.clear_bass,
-                            band_400: equalizer.band_400,
-                            band_1000: equalizer.band_1000,
-                            band_2500: equalizer.band_2500,
-                            band_6300: equalizer.band_6300,
-                            band_16000: equalizer.band_16000,
+                            preset: ChangeablePreset::try_from(preset).unwrap(),
+                            bass_level: EqBand::new(equalizer.clear_bass).unwrap(),
+                            band_400: EqBand::new(equalizer.band_400).unwrap(),
+                            band_1000: EqBand::new(equalizer.band_1000).unwrap(),
+                            band_2500: EqBand::new(equalizer.band_2500).unwrap(),
+                            band_6300: EqBand::new(equalizer.band_6300).unwrap(),
+                            band_16000: EqBand::new(equalizer.band_16000).unwrap(),
                         })
                         .unwrap();
                 }
@@ -322,7 +324,7 @@ impl HeadphoneUi {
                         dragging_ambient_sound_slider: false,
                         mode: AncMode::Off,
                         ambient_sound_voice_passthrough: false,
-                        ambient_sound_level: 0,
+                        ambient_sound_level: AmbientLevel::new(0).unwrap(),
                     })
                     .unwrap();
             }
@@ -339,7 +341,7 @@ impl HeadphoneUi {
                         dragging_ambient_sound_slider: false,
                         mode: AncMode::AmbientSound,
                         ambient_sound_voice_passthrough: true,
-                        ambient_sound_level: *ambient_slider,
+                        ambient_sound_level: AmbientLevel::new(*ambient_slider as u8).unwrap(),
                     })
                     .unwrap();
             }
@@ -357,7 +359,8 @@ impl HeadphoneUi {
                                 dragging_ambient_sound_slider: false,
                                 mode: AncMode::AmbientSound,
                                 ambient_sound_voice_passthrough: *voice_passthrough,
-                                ambient_sound_level: *ambient_slider,
+                                ambient_sound_level: AmbientLevel::new(*ambient_slider as u8)
+                                    .unwrap(),
                             })
                             .unwrap();
                     }
@@ -376,7 +379,7 @@ impl HeadphoneUi {
                         dragging_ambient_sound_slider: false,
                         mode: AncMode::ActiveNoiseCanceling,
                         ambient_sound_voice_passthrough: true,
-                        ambient_sound_level: *ambient_slider,
+                        ambient_sound_level: AmbientLevel::new(*ambient_slider as u8).unwrap(),
                     })
                     .unwrap();
             }
